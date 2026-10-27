@@ -769,12 +769,22 @@ def log(msg):
         pass
 
 
+def load_bundled_fonts():
+    """Inter из папки fonts — только для этого процесса, в систему не устанавливается."""
+    folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts")
+    if os.path.isdir(folder):
+        for name in os.listdir(folder):
+            if name.lower().endswith((".ttf", ".otf")):
+                ctypes.windll.gdi32.AddFontResourceExW(os.path.join(folder, name), 0x10, 0)  # FR_PRIVATE
+
+
 def main():
     background = "--background" in sys.argv  # автозапуск: только поднять фоновый процесс
     try:
         ctypes.windll.shcore.SetProcessDpiAwareness(2)
     except (AttributeError, OSError):
         pass
+    load_bundled_fonts()
     root = tk.Tk()
     daemon = Daemon(root)
     if not background:

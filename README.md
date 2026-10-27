@@ -51,38 +51,28 @@ ytfast "https://www.youtube.com/watch?v=..." -q 1080
 
 ## Установка
 
-Нужно:
+**Code → Download ZIP**, распаковать и дважды кликнуть **`install.cmd`**.
 
-- Windows 10 2004+ или Windows 11;
-- Python с tkinter (проверено на 3.14);
-- `yt-dlp` и `ffmpeg` — в `PATH`, в переменных `YTDLP` / `FFMPEG` или в папке
-  [media-downloader](https://github.com/mhogomchungu/media-downloader);
-- шрифт [Inter](https://rsms.me/inter/) — ближе всего к SF Pro; без него будет Segoe UI.
-
-Добавить папку в `PATH`, чтобы работала команда `ytfast`, и включить фоновый
-процесс с горячей клавишей (PowerShell, из папки репозитория):
+Или одной командой в PowerShell:
 
 ```powershell
-$dir = (Get-Location).Path
-$pyw = & python -c "import os, sys; print(os.path.join(os.path.dirname(sys.executable), 'pythonw.exe'))"
-
-# PATH пользователя
-$k = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
-$k.SetValue('Path', $k.GetValue('Path', '', 'DoNotExpandEnvironmentNames').TrimEnd(';') + ";$dir", 'ExpandString')
-
-# автозапуск фонового процесса и ярлык в «Пуск»
-$sh = New-Object -ComObject WScript.Shell
-foreach ($p in @('Startup\YT Fast.lnk', 'YT Fast.lnk')) {
-    $s = $sh.CreateShortcut("$env:APPDATA\Microsoft\Windows\Start Menu\Programs\$p")
-    $s.TargetPath = $pyw
-    $s.Arguments = "`"$dir\ytfast_gui.pyw`"" + $(if ($p -like 'Startup*') { ' --background' } else { '' })
-    $s.WorkingDirectory = $dir
-    $s.Save()
-}
-Start-Process $pyw "`"$dir\ytfast_gui.pyw`" --background"
+irm https://raw.githubusercontent.com/ShuraProgerMain/ytfast/main/install.ps1 | iex
 ```
 
-Удалить: убрать `YT Fast` из папки `shell:startup` и из меню «Пуск».
+Скрипт всё сделает сам, права администратора не нужны:
+
+- поставит Python, если его нет (через winget или с python.org, только для текущего пользователя);
+- скачает `yt-dlp`, `ffmpeg` и `deno` (нужен yt-dlp для YouTube) в `%LOCALAPPDATA%\YTFast\bin` —
+  в много соединений, тем же загрузчиком; то, что уже есть в системе, переиспользует;
+- добавит команду `ytfast` в `PATH`;
+- создаст ярлык в «Пуск», автозапуск фонового процесса и запустит его.
+
+На чистой Windows (проверено в Windows Sandbox) установка с нуля занимает около 5 минут.
+Дальше — Ctrl+Alt+Y. Повторный запуск установки обновляет программу и yt-dlp.
+Удалить — «Установка и удаление программ» → YT Fast (или `install.cmd -Uninstall`).
+
+Нужна Windows 10 2004+ или Windows 11. Шрифт [Inter](https://rsms.me/inter/) лежит в
+`fonts/` и подключается только для программы, в систему не ставится.
 
 ## Как устроено
 
@@ -91,7 +81,8 @@ Start-Process $pyw "`"$dir\ytfast_gui.pyw`" --background"
 | `ytfast.py` | загрузчик: ссылки через `yt-dlp -J`, многопоточная загрузка с докачкой обрывов и перехватом хвоста у медленных соединений, отмена, склейка `ffmpeg` |
 | `ytfast_gui.pyw` | окно и фоновый процесс: держит Tk и готовые иконки, сам ловит Ctrl+Alt+Y, повторный запуск передаёт ему команду через именованный канал — поэтому окно появляется за ~60 мс |
 | `macui.py` | интерфейс в духе macOS Big Sur поверх tkinter: размытый «вибрантный» фон из снимка экрана под окном, мягкая тень отдельным layered-окном, сглаженные иконки в духе SF Symbols, поле ввода |
-| `ytfast.bat` | команда `ytfast` для консоли |
+| `install.ps1`, `install.cmd` | установка, обновление и удаление |
+| `fonts/` | Inter под лицензией SIL OFL 1.1 (`fonts/OFL.txt`) |
 
 Настройки — `%APPDATA%\ytfast\settings.json`, ошибки фонового процесса —
 `%APPDATA%\ytfast\gui.log`.

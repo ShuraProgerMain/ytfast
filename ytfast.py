@@ -23,6 +23,7 @@ CHUNK = 1 << 20  # 1 MiB: при ~100 КБ/с на соединение кусо
 MIN_STEAL = 128 * 1024  # меньше этого остаток у другого потока не отбираем
 TIMEOUT = 8  # секунд без данных — соединение считаем зависшим
 DEFAULT_OUT = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
+TOOLS_DIR = os.path.join(os.environ.get("LOCALAPPDATA", ""), "YTFast", "bin")  # сюда кладёт install.ps1
 APPDATA_BIN = os.path.join(os.environ.get("APPDATA", ""), "media-downloader", "bin")
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # без мигающей консоли из GUI
 
@@ -36,12 +37,14 @@ class Cancelled(Error):
 
 
 def find_tool(name, env):
-    path = os.environ.get(env) or shutil.which(name)
+    """Переменная окружения → папка установщика → PATH → media-downloader."""
+    own = os.path.join(TOOLS_DIR, name + ".exe")
+    path = os.environ.get(env) or (own if os.path.isfile(own) else None) or shutil.which(name)
     if not path:
         cand = os.path.join(APPDATA_BIN, name + ".exe")
         path = cand if os.path.isfile(cand) else None
     if not path:
-        raise Error(f"Не найден {name}. Укажи путь в переменной {env}.")
+        raise Error(f"Не найден {name}. Запусти install.cmd или укажи путь в переменной {env}.")
     return path
 
 
@@ -56,6 +59,9 @@ def format_selector(quality=None, audio=False, h264=False):
 
 def extract(ytdlp, url, fmt, cancel=None):
     cmd = [ytdlp, "-J", "--no-playlist", "--no-warnings", "-f", fmt, url]
+    deno = os.path.join(TOOLS_DIR, "deno.exe")
+    if os.path.isfile(deno):  # YouTube требует JS-движок для расшифровки ссылок
+        cmd[1:1] = ["--js-runtimes", f"deno:{deno}"]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
     while True:
@@ -97,6 +103,7 @@ class Conn:
             if resp.status not in (200, 206):
                 resp.read()
                 raise IOError(f"HTTP {resp.status}")
+            self.final_url = url
             return resp
         raise IOError("слишком много редиректов")
 
@@ -115,6 +122,22 @@ def content_length(url, headers):
         return int(cr.rsplit("/", 1)[1])
     finally:
         c.close()
+
+
+def fetch(url, path, connections=16, on_progress=None):
+    """Скачать обычный файл в много соединений — так установщик тянет yt-dlp, ffmpeg и deno."""
+    c = Conn()
+    try:
+        resp = c.get(url, {}, 0, 0)
+        resp.read()
+        size = int(resp.getheader("Content-Range", "").rsplit("/", 1)[1])
+        url = c.final_url  # куски сразу идут на CDN, без редиректа на каждый
+    finally:
+        c.close()
+    part = path + ".part"
+    el = Downloader([{"url": url, "headers": {}, "size": size, "path": part}], connections).run(on_progress)
+    os.replace(part, path)
+    return size, el
 
 
 class Downloader:
@@ -318,7 +341,15 @@ def main():
     p.add_argument("-o", "--output", default=DEFAULT_OUT, help=f"папка для сохранения ({DEFAULT_OUT})")
     p.add_argument("--audio", action="store_true", help="только звук (m4a)")
     p.add_argument("--h264", action="store_true", help="только H.264 + AAC (mp4 для любых плееров)")
+    p.add_argument("--fetch", metavar="ФАЙЛ", help="скачать ссылку как обычный файл (нужно установщику)")
     args = p.parse_args()
+    if args.fetch:
+        try:
+            size, el = fetch(args.urls[0], args.fetch, args.connections)
+        except (Error, OSError, ValueError) as e:
+            sys.exit(f"Не удалось скачать {args.urls[0]}: {e}")
+        print(f"\r  {size / 2**20:.1f} MiB за {el:.1f} с{' ' * 50}")
+        return
     for url in args.urls:
         try:
             download(url, args.output, args.quality, args.audio, args.h264, args.connections)
