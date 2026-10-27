@@ -234,17 +234,29 @@ if ($ytdlp -eq (Join-Path $Bin 'yt-dlp.exe')) {
 }
 Done "$ytdlp ($(Invoke-Native $ytdlp @('--version')))"
 
-Step 'deno (нужен yt-dlp, чтобы расшифровывать ссылки YouTube)'
-$deno = @((Get-Command deno -ErrorAction SilentlyContinue | Select-Object -First 1).Source,
-          (Join-Path (Split-Path $ytdlp) 'deno.exe'), (Join-Path $Bin 'deno.exe')) |
-    Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-if (-not $deno) {
-    $zip = Join-Path $Bin 'deno.zip'
-    Get-File 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip' $zip
-    Expand-Files $zip '^deno\.exe$'
-    $deno = Join-Path $Bin 'deno.exe'
+Step 'JS-движок (нужен yt-dlp, чтобы расшифровывать ссылки YouTube)'
+# Node.js 20+ справляется так же быстро, как deno, — тогда deno (93 МБ) не качаем
+$nodeVersion = $null
+$node = (Get-Command node -ErrorAction SilentlyContinue | Select-Object -First 1).Source
+if ($node) {
+    $v = "$(Invoke-Native $node @('--version'))".Trim().TrimStart('v')
+    $major = 0
+    if ([int]::TryParse($v.Split('.')[0], [ref]$major) -and $major -ge 20) { $nodeVersion = $v }
 }
-Done $deno
+if ($nodeVersion) {
+    Done "Node.js $nodeVersion — deno не нужен"
+} else {
+    $deno = @((Get-Command deno -ErrorAction SilentlyContinue | Select-Object -First 1).Source,
+              (Join-Path (Split-Path $ytdlp) 'deno.exe'), (Join-Path $Bin 'deno.exe')) |
+        Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
+    if (-not $deno) {
+        $zip = Join-Path $Bin 'deno.zip'
+        Get-File 'https://github.com/denoland/deno/releases/latest/download/deno-x86_64-pc-windows-msvc.zip' $zip
+        Expand-Files $zip '^deno\.exe$'
+        $deno = Join-Path $Bin 'deno.exe'
+    }
+    Done $deno
+}
 
 Step 'ffmpeg (склейка видео и звука)'
 $ffmpeg = Find-Tool 'ffmpeg' 'FFMPEG'

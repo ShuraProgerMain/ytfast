@@ -8,6 +8,7 @@ yt-dlp используется только для получения прям�
 """
 import argparse
 import collections
+import functools
 import http.client
 import json
 import os
@@ -59,10 +60,29 @@ def format_selector(quality=None, audio=False, h264=False):
     return f"bv*{h}+ba[ext=m4a]/bv*{h}+ba/b{h}"
 
 
+@functools.lru_cache(maxsize=1)
+def node_ok():
+    """Node.js 20+ в PATH: yt-dlp решает им JS-задачу YouTube так же быстро, как deno."""
+    node = shutil.which("node")
+    if not node:
+        return False
+    try:
+        out = subprocess.run([node, "--version"], capture_output=True, text=True, timeout=5,
+                             creationflags=NO_WINDOW).stdout
+        return int(out.strip().lstrip("v").split(".")[0]) >= 20
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return False
+
+
 def extract(ytdlp, url, fmt, cancel=None):
-    cmd = [ytdlp, "-J", "--no-playlist", "--no-warnings", "-f", fmt, url]
+    # skip=hls: манифест HLS не нужен (качаем только DASH по https), а стоит ~1.3 с на каждый ролик
+    cmd = [ytdlp, "-J", "--no-playlist", "--no-warnings", "--extractor-args", "youtube:skip=hls", "-f", fmt, url]
+    # JS-движок для расшифровки ссылок YouTube: Node, если есть, иначе deno от установщика
+    # (deno рядом с yt-dlp или в PATH yt-dlp находит сам)
     deno = os.path.join(TOOLS_DIR, "deno.exe")
-    if os.path.isfile(deno):  # YouTube требует JS-движок для расшифровки ссылок
+    if node_ok():
+        cmd[1:1] = ["--js-runtimes", "node"]
+    elif os.path.isfile(deno):
         cmd[1:1] = ["--js-runtimes", f"deno:{deno}"]
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
                          encoding="utf-8", errors="replace", creationflags=NO_WINDOW)
