@@ -54,7 +54,9 @@ def format_selector(quality=None, audio=False, h264=False):
     h = f"[height<={quality}]" if quality else ""
     if h264:
         return f"bv*{h}[vcodec^=avc1]+ba[ext=m4a]/b{h}[ext=mp4]/b{h}"
-    return f"bv*{h}+ba/b{h}"
+    # звук — AAC (m4a): Opus, который YouTube отдаёт «лучшим», не понимают DaVinci Resolve,
+    # Premiere и часть плееров — видео открывается без звука
+    return f"bv*{h}+ba[ext=m4a]/bv*{h}+ba/b{h}"
 
 
 def extract(ytdlp, url, fmt, cancel=None):
