@@ -42,6 +42,7 @@ import threading  # noqa: E402
 import tkinter as tk  # noqa: E402
 import tkinter.font as tkfont  # noqa: E402
 import traceback  # noqa: E402
+from tkinter import filedialog  # noqa: E402
 from multiprocessing.connection import Listener  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -57,31 +58,62 @@ LOG = os.path.join(os.path.dirname(SETTINGS), "gui.log")
 W, ROW, RADIUS = 680, 56, 12  # строка Spotlight
 STRIP_W, STRIP_H = 330, 60  # полоска загрузки
 MENU_ITEM, MENU_PAD = 22, 5
+FOLDER_ROW, FOLDERS_W = 26, 340  # список папок
+DLG_W, DLG_H = 440, 190  # окно «добавить папку»
+TAG_COLORS = [None, "red", "orange", "yellow", "green", "blue", "purple", "gray"]  # как метки в Finder
 
 
-def load_quality():
+def load_settings():
+    """quality — индекс в QUALITIES; folders — [{path, color}]; folder — последняя папка сохранения."""
     try:
         with open(SETTINGS, encoding="utf-8") as f:
-            return json.load(f).get("quality", 3)
+            s = json.load(f)
     except (OSError, ValueError):
-        return 3  # 1080p
+        s = {}
+    s.setdefault("quality", 3)  # 1080p
+    s.setdefault("folders", [{"path": ytfast.DEFAULT_OUT, "color": None}])
+    s.setdefault("folder", s["folders"][0]["path"] if s["folders"] else ytfast.DEFAULT_OUT)
+    return s
 
 
-def save_quality(i):
+def save_settings(**changes):
+    s = load_settings()
+    s.update(changes)
     try:
         os.makedirs(os.path.dirname(SETTINGS), exist_ok=True)
         with open(SETTINGS, "w", encoding="utf-8") as f:
-            json.dump({"quality": i}, f)
+            json.dump(s, f, ensure_ascii=False, indent=1)
     except OSError:
         pass
 
 
-def open_folder(path=None):
-    os.makedirs(ytfast.DEFAULT_OUT, exist_ok=True)
+def same_path(a, b):
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
+
+
+def folder_color(path):
+    return next((f.get("color") for f in load_settings()["folders"] if same_path(f["path"], path)), None)
+
+
+def open_folder(path=None, folder=ytfast.DEFAULT_OUT):
+    """Показать файл в проводнике, а без файла — открыть папку (если её ещё нет — создать)."""
     if path and os.path.exists(path):
         subprocess.Popen(["explorer", "/select,", os.path.normpath(path)])
     else:
-        os.startfile(ytfast.DEFAULT_OUT)
+        os.makedirs(folder, exist_ok=True)
+        os.startfile(folder)
+
+
+def elide_path(path, font, width):
+    """D:\\…\\Видео\\Шортсы — диск и хвост пути, середина сокращается."""
+    if font.measure(path) <= width:
+        return path
+    parts = path.split("\\")
+    for i in range(1, len(parts)):
+        cand = parts[0] + "\\…\\" + "\\".join(parts[i:])
+        if font.measure(cand) <= width:
+            return cand
+    return elide("…\\" + parts[-1], font, width)
 
 
 def elide(text, font, width):
@@ -126,11 +158,40 @@ class Resources:
             "sep": ui.solid(px(W), max(1, px(1)), T.separator),
             "track": ui.plate(W - 36, 6, 3, T.track, S),
             "seg": ui.plate(120, 6, 3, acc, S),
+            "dots": ui.sym_dots(sec, S),
+            "hover18": ui.plate(18, 30, 6, T.hover, S),
+            "clear18": ui.plate(18, 30, 6, (0, 0, 0, 0), S),
+            "plus": ui.sym_plus(ui.rgba(T.label), S),
+            "plus_on": ui.sym_plus((255, 255, 255, 1), S),
+            "xmark_on": ui.sym_xmark((255, 255, 255, 1), S),
         }
         # крутилки (неизвестный прогресс): 12 кадров для двух размеров
         self.spinner = {sz: [ui.ring(sz, w, T.track, acc, S, start=i / 12) for i in range(12)]
                         for sz, w in ((22, 2.4), (30, 3))}
         self.sel_plates = {}  # подложки селектора по ширине текста
+        self.cache = {}  # цветные папки, метки, кружки выбора цвета
+
+    def folder_icon(self, color):
+        """Иконка папки в цвет метки; без цвета — обычная серая."""
+        key = ("folder", color)
+        if key not in self.cache:
+            hexc = self.T.tags.get(color)
+            self.cache[key] = ui.sym_folder(ui.rgba(hexc), self.S, fill=0.22) if hexc else self.img["folder"]
+        return self.cache[key]
+
+    def tag_dot(self, color):
+        key = ("dot", color)
+        if key not in self.cache:
+            hexc = self.T.tags.get(color)
+            self.cache[key] = ui.dot(ui.rgba(hexc) if hexc else None, self.S)
+        return self.cache[key]
+
+    def tag_swatch(self, color, selected):
+        key = ("swatch", color, selected)
+        if key not in self.cache:
+            hexc = self.T.tags.get(color)
+            self.cache[key] = ui.swatch(ui.rgba(hexc) if hexc else None, self.S, selected)
+        return self.cache[key]
 
     def sel_plate(self, w):
         if w not in self.sel_plates:
@@ -163,7 +224,15 @@ class App:
         self.close_at = None
         self.closed = False
         self.spin = 0
-        self.q = min(max(load_quality(), 0), len(QUALITIES) - 1)
+        settings = load_settings()
+        self.q = min(max(settings["quality"], 0), len(QUALITIES) - 1)
+        self.folder = settings["folder"]  # куда сохранять: по умолчанию — последняя папка сохранения
+        self.folders_pop = None  # выпадающий список папок
+        self.dialog = None  # окно «добавить папку»
+        self.modal = False  # открыт системный диалог выбора папки
+        self.dots_on = False
+        self.dots_armed = True
+        self.dots_since = self.leave_since = None
 
         self.f_field, self.f_text, self.f_semi, self.f_small = res.f_field, res.f_text, res.f_semi, res.f_small
         self.img = dict(res.img)  # общие иконки + свои меняющиеся картинки (кольцо, полоса)
@@ -196,6 +265,8 @@ class App:
             return
         self.closed = True
         self.close_menu(refocus=False)
+        self.close_folders(refocus=False)
+        self.close_dialog(refocus=False)
         self.panel.destroy()
         self.daemon.window_closed(self)
 
@@ -205,13 +276,18 @@ class App:
         cy = px(ROW / 2)
         self.lead = c.create_image(px(29), cy, image=self.img["search"], tags="full")
 
-        # справа налево: папка/отмена, селектор качества
-        bx = px(W - 14 - 30)
+        # справа налево: «⋯» (видно при наведении на папку), папка/отмена, селектор качества
+        self.dots_x = px(W - 8 - 18)
+        bx = self.btn_x = self.dots_x - px(2 + 30)
         self.btn = c.create_image(bx, cy - px(15), anchor="nw", image=self.img["clear30"], tags=("full", "btn"))
-        self.btn_icon = c.create_image(bx + px(15), cy, image=self.img["folder"], tags=("full", "btn"))
+        self.btn_icon = c.create_image(bx + px(15), cy, image=self.folder_img(), tags=("full", "btn"))
         c.tag_bind("btn", "<Enter>", lambda e: c.itemconfigure(self.btn, image=self.img["hover30"]))
         c.tag_bind("btn", "<Leave>", lambda e: c.itemconfigure(self.btn, image=self.img["clear30"]))
         c.tag_bind("btn", "<ButtonRelease-1>", lambda e: self.on_button())
+        self.dots_bg = c.create_image(self.dots_x, cy - px(15), anchor="nw", image=self.img["clear18"],
+                                      tags=("full", "dots"))
+        c.create_image(self.dots_x + px(9), cy, image=self.img["dots"], tags=("full", "dots"))
+        c.tag_bind("dots", "<ButtonRelease-1>", lambda e: self.toggle_folders())
 
         # селектор качества: просто текст и неяркая стрелка, подложка — только при наведении
         self.sel_r = bx - px(4)
@@ -243,6 +319,13 @@ class App:
         self.bar_w = W - 36
         c.itemconfigure(self.sep, image=self.img["sep"])
         c.itemconfigure(self.bar_track, image=self.img["track"])
+
+    def folder_img(self):
+        return self.res.folder_icon(folder_color(self.folder))
+
+    def update_folder_icon(self):
+        if self.mode != "busy":
+            self.c.itemconfigure(self.btn_icon, image=self.folder_img())
 
     def sel_plate(self):
         """Подложка селектора по ширине текущего пункта."""
@@ -294,7 +377,8 @@ class App:
         editable = self.mode in ("input", "error")
         self.field.set_readonly(not editable)
         c.itemconfigure("pop", state="normal" if editable else "hidden")
-        c.itemconfigure(self.btn_icon, image=self.img["stop" if self.mode == "busy" else "folder"])
+        c.itemconfigure(self.btn_icon, image=self.img["stop"] if self.mode == "busy" else self.folder_img())
+        c.itemconfigure("dots", state="normal" if self.dots_on and editable else "hidden")
 
         h = ROW
         if self.mode in ("busy", "done") or (self.mode == "error" and self.status):
@@ -375,20 +459,20 @@ class App:
 
     # ---------- фокус ----------
     def check_blur(self):
-        """Закрываемся, когда активным становится чужое окно (после того как было наше)."""
+        """Закрываемся, когда активным становится окно другой программы (после того как было наше).
+        Свои окна — меню, список папок, окно добавления, системный выбор папки — не в счёт."""
         if self.view != "full":
             return
-        ours = {self.panel.hwnd}
-        if self.menu:
-            ours.add(self.menu.hwnd)
-        fg = ui.GetForegroundWindow()
-        if fg in ours:
+        owner = ui.foreground_owner()
+        if owner == os.getpid():
             self.had_focus = True
-        elif self.had_focus and fg:
+        elif owner and self.had_focus and not self.modal:
             self.dismiss()
 
     def dismiss(self):
         self.close_menu(refocus=False)
+        self.close_folders(refocus=False)
+        self.close_dialog(refocus=False)
         if self.mode == "busy":
             self.to_strip()
         else:
@@ -397,6 +481,8 @@ class App:
     def on_escape(self):
         if self.menu:
             self.close_menu()
+        elif self.folders_pop:
+            self.close_folders()
         elif self.view == "full":
             self.dismiss()
 
@@ -410,16 +496,20 @@ class App:
                 self.start()
 
     def click_canvas(self, e):
-        if self.menu and self.view == "full":
+        if self.view != "full":
+            return
+        if self.menu:
             x0, y0, x1, y1 = self.c.bbox("pop")
             if not (x0 <= e.x <= x1 and y0 <= e.y <= y1):
                 self.close_menu()
+        if self.folders_pop and not (self.dots_x - self.px(2) <= e.x < self.dots_x + self.px(18)):
+            self.close_folders()
 
     def on_button(self):
         if self.mode == "busy":
             self.cancel_job()
         else:
-            open_folder(self.result if self.mode == "done" else None)
+            open_folder(self.result if self.mode == "done" else None, self.folder)
 
     # ---------- меню качества (как NSPopUpButton: текущий пункт поверх кнопки) ----------
     def toggle_menu(self):
@@ -493,7 +583,7 @@ class App:
 
     def choose(self, i):
         self.q = i
-        save_quality(i)
+        save_settings(quality=i)
         self.c.itemconfigure(self.pop_text, text=QUALITIES[i][0])
         self.close_menu()
         self.sel_plate()
@@ -508,6 +598,262 @@ class App:
         self.menu = None
         if not self.closed:
             self.hover_sel(self.sel_hover)
+
+    # ---------- папки: «⋯» у иконки папки, список сохранённых путей, добавление ----------
+    def set_dots(self, on):
+        on = on and self.mode in ("input", "error") and self.view == "full"
+        if on != self.dots_on:
+            self.dots_on = on
+            self.c.itemconfigure("dots", state="normal" if on else "hidden")
+
+    def update_folder_hover(self):
+        """«⋯» видно, пока мышь над папкой, «⋯» или списком; наведение на «⋯» раскрывает список,
+        уход мыши со «⋯» и списка — сворачивает."""
+        if self.mode not in ("input", "error") or self.dialog:
+            self.set_dots(False)
+            return
+        x, y = self.root.winfo_pointerxy()
+        x, y = x - self.root.winfo_rootx(), y - self.root.winfo_rooty()
+        top, bottom = self.px(ROW / 2 - 15), self.px(ROW / 2 + 15)
+        over_btn = self.btn_x <= x < self.btn_x + self.px(30) and top <= y < bottom
+        over_dots = self.dots_x - self.px(2) <= x < self.dots_x + self.px(18) and top <= y < bottom
+        over_pop = False
+        if self.folders_pop:
+            gx, gy, gw, gh = self.folders_pop.geom
+            px_, py_ = x + self.root.winfo_rootx(), y + self.root.winfo_rooty()
+            over_pop = gx <= px_ < gx + gw and gy <= py_ < gy + gh
+        self.set_dots(over_btn or over_dots or over_pop or bool(self.folders_pop))
+        self.c.itemconfigure(self.dots_bg, image=self.img["hover18" if over_dots or self.folders_pop else "clear18"])
+        now = time.monotonic()
+        if not over_dots:
+            self.dots_armed = True  # после закрытия кликом список не раскрывается, пока мышь не уйдёт
+        if over_dots and not self.folders_pop and self.dots_armed:
+            self.dots_since = self.dots_since or now
+            if now - self.dots_since > 0.15:
+                self.open_folders()
+        else:
+            self.dots_since = None
+        if self.folders_pop:
+            # подсветка строки по реальному положению мыши — не зависит от событий движения
+            row = self.folders_row(y + self.root.winfo_rooty() - self.folders_pop.geom[1]) if over_pop else None
+            self.folders_highlight(row)
+            if over_dots or over_pop:
+                self.leave_since = None
+            else:
+                self.leave_since = self.leave_since or now
+                if now - self.leave_since > 0.4:
+                    self.close_folders()
+
+    def toggle_folders(self):
+        if self.folders_pop:
+            self.close_folders()
+            self.dots_armed = False
+        else:
+            self.open_folders()
+
+    def open_folders(self):
+        if self.folders_pop or self.mode not in ("input", "error") or self.view != "full":
+            return
+        self.close_menu()
+        px, T = self.px, self.T
+        self.folder_list = load_settings()["folders"]
+        n = len(self.folder_list)
+        self.fold_sep = 9 if n else 0
+        ph = MENU_PAD * 2 + FOLDER_ROW * (n + 1) + self.fold_sep
+        self.folders_pop = pop = ui.Panel(tk.Toplevel(self.root), T, 8, self.S)
+        pc = pop.canvas
+        self.img["fold_hl"] = ui.plate(FOLDERS_W - 2 * MENU_PAD, FOLDER_ROW, 5, ui.rgba(T.accent), self.S)
+        self.fold_hl = pc.create_image(px(MENU_PAD), 0, anchor="nw", image=self.img["fold_hl"], state="hidden")
+        self.fold_hl_i = None
+        self.fold_rows = []
+        for i, f in enumerate(self.folder_list):
+            yc = px(MENU_PAD + FOLDER_ROW * i + FOLDER_ROW / 2)
+            current = same_path(f["path"], self.folder)
+            chk = pc.create_image(px(15), yc, image=self.img["check"], state="normal" if current else "hidden")
+            pc.create_image(px(31), yc, image=self.res.tag_dot(f.get("color")))
+            txt = pc.create_text(px(43), yc, anchor="w", font=self.f_text, fill=T.label,
+                                 text=elide_path(f["path"], self.f_text, px(FOLDERS_W - 43 - 36)))
+            xm = pc.create_image(px(FOLDERS_W - 20), yc, image=self.img["xmark_on"], state="hidden")
+            self.fold_rows.append((chk, txt, xm))
+        if n:
+            self.img["fold_sep"] = ui.solid(px(FOLDERS_W - 2 * MENU_PAD - 16), max(1, px(1)), T.separator)
+            pc.create_image(px(MENU_PAD + 8), px(MENU_PAD + FOLDER_ROW * n + 4), anchor="nw", image=self.img["fold_sep"])
+        ya = px(MENU_PAD + FOLDER_ROW * n + self.fold_sep + FOLDER_ROW / 2)
+        self.fold_add = (pc.create_image(px(31), ya, image=self.img["plus"]),
+                         pc.create_text(px(43), ya, anchor="w", text="Добавить папку…", font=self.f_text, fill=T.label))
+        pc.bind("<Motion>", lambda e: self.folders_highlight(self.folders_row(e.y)))
+        pc.bind("<Leave>", lambda e: self.folders_highlight(None))
+        pc.bind("<ButtonRelease-1>", self.folders_click)
+        x = self.root.winfo_rootx() + self.dots_x + px(18) - px(FOLDERS_W)
+        y = self.root.winfo_rooty() + px(ROW) + px(4)
+        pop.place(x, y, px(FOLDERS_W), px(ph))
+        ui.to_foreground(self.root)  # клавиатура остаётся в строке…
+        pop.raise_()  # …а список — поверх неё
+
+    def folders_row(self, y):
+        """Номер строки под мышью: 0..n-1 — пути, n — «Добавить папку…», None — мимо."""
+        y = y / self.S - MENU_PAD
+        n = len(self.folder_list)
+        if 0 <= y < FOLDER_ROW * n:
+            return int(y // FOLDER_ROW)
+        if FOLDER_ROW * n + self.fold_sep <= y < FOLDER_ROW * (n + 1) + self.fold_sep:
+            return n
+        return None
+
+    def folders_highlight(self, hl):
+        if not self.folders_pop or hl == self.fold_hl_i:
+            return
+        self.fold_hl_i = hl
+        pc, T, n = self.folders_pop.canvas, self.T, len(self.folder_list)
+        if hl is None:
+            pc.itemconfigure(self.fold_hl, state="hidden")
+        else:
+            top = MENU_PAD + FOLDER_ROW * hl + (self.fold_sep if hl == n else 0)
+            pc.coords(self.fold_hl, self.px(MENU_PAD), self.px(top))
+            pc.itemconfigure(self.fold_hl, state="normal")
+        for i, (chk, txt, xm) in enumerate(self.fold_rows):
+            on = i == hl
+            pc.itemconfigure(txt, fill="white" if on else T.label)
+            pc.itemconfigure(chk, image=self.img["check_on" if on else "check"])
+            pc.itemconfigure(xm, state="normal" if on else "hidden")  # крестик — у строки под мышью
+        pc.itemconfigure(self.fold_add[0], image=self.img["plus_on" if hl == n else "plus"])
+        pc.itemconfigure(self.fold_add[1], fill="white" if hl == n else T.label)
+
+    def folders_click(self, e):
+        i = self.folders_row(e.y)
+        if i is None:
+            return
+        if i == len(self.folder_list):
+            self.open_add_dialog()
+        elif e.x >= self.px(FOLDERS_W - 34):
+            self.delete_folder(i)
+        else:
+            self.folder = self.folder_list[i]["path"]
+            save_settings(folder=self.folder)
+            self.close_folders()
+            self.update_folder_icon()
+
+    def delete_folder(self, i):
+        removed = self.folder_list.pop(i)
+        if same_path(removed["path"], self.folder):
+            self.folder = self.folder_list[0]["path"] if self.folder_list else ytfast.DEFAULT_OUT
+        save_settings(folders=self.folder_list, folder=self.folder)
+        self.update_folder_icon()
+        self.close_folders()
+        self.open_folders()  # тот же список без удалённой строки
+
+    def close_folders(self, refocus=True):
+        if not self.folders_pop:
+            return
+        if refocus and not self.closed:
+            ui.to_foreground(self.root)
+            self.field.focus()
+        self.folders_pop.destroy()
+        self.folders_pop = None
+        self.leave_since = None
+
+    def open_add_dialog(self):
+        """Окно-лист под строкой: путь (с кнопкой «Обзор…») и цвет метки."""
+        self.close_folders(refocus=False)
+        if self.dialog:
+            return
+        px, T, S = self.px, self.T, self.S
+        self.dialog = dlg = ui.Panel(tk.Toplevel(self.root), T, 12, S)
+        dc = self.dc = dlg.canvas
+        dc.create_text(px(18), px(22), anchor="w", text="Папка для сохранения", font=self.f_semi, fill=T.label)
+        fw = DLG_W - 36 - 92
+        self.img["dlg_field"] = ui.raster(fw, 30, [(ui.rrect(0, 0, fw, 30, 6), T.input_edge),
+                                                  (ui.rrect(1, 1, fw - 1, 29, 5), ui.rgba(T.input))], S)
+        dc.create_image(px(18), px(40), anchor="nw", image=self.img["dlg_field"])
+        self.dlg_field = ui.TextField(dc, T, self.f_text, px(fw - 18), px(24), "Например, D:\\Видео\\Шортсы")
+        self.dlg_field.set_bg(ui.solid(px(fw - 18), px(24), ui.rgba(T.input)))
+        dc.create_window(px(27), px(43), anchor="nw", window=self.dlg_field.c)
+        self.dialog_button("browse", DLG_W - 18 - 84, 40, 84, "Обзор…", self.browse_folder)
+
+        dc.create_text(px(18), px(90), anchor="w", text="Цвет", font=self.f_small, fill=T.secondary)
+        self.dlg_color = None
+        self.dlg_swatches = []
+        for i, color in enumerate(TAG_COLORS):
+            item = dc.create_image(px(18 + 11 + i * 30), px(116), tags=f"sw{i}")
+            dc.tag_bind(f"sw{i}", "<ButtonRelease-1>", lambda e, c=color: self.pick_color(c))
+            self.dlg_swatches.append(item)
+        self.pick_color(None)
+
+        self.dlg_err = dc.create_text(px(18), px(DLG_H - 33), anchor="w", text="", font=self.f_small,
+                                      fill=T.red, width=px(DLG_W - 36 - 212))
+        self.dialog_button("cancel", DLG_W - 18 - 96 - 10 - 96, DLG_H - 48, 96, "Отмена", self.close_dialog)
+        self.dialog_button("add", DLG_W - 18 - 96, DLG_H - 48, 96, "Добавить", self.add_folder, primary=True)
+
+        top = dlg.win
+        top.bind("<Return>", lambda e: self.add_folder())
+        top.bind("<KP_Enter>", lambda e: self.add_folder())
+        top.bind("<Escape>", lambda e: self.close_dialog())
+        x = self.root.winfo_rootx() + (px(W) - px(DLG_W)) // 2
+        y = self.root.winfo_rooty() + self.panel.geom[3] + px(10)
+        dlg.place(x, y, px(DLG_W), px(DLG_H))
+        ui.to_foreground(top)
+        self.dlg_field.focus()
+
+    def dialog_button(self, tag, x, y, w, text, command, primary=False):
+        """Кнопка в стиле Big Sur: основная — синяя, остальные — полупрозрачные."""
+        T, S, px, dc = self.T, self.S, self.px, self.dc
+        if primary:
+            normal = hover = ui.plate(w, 30, 7, ui.rgba(T.accent), S)
+        else:
+            normal = ui.plate(w, 30, 7, T.circle, S)
+            hover = ui.plate(w, 30, 7, T.circle[:3] + (T.circle[3] * 2,), S)
+        self.img[f"dlg_{tag}"], self.img[f"dlg_{tag}_h"] = normal, hover
+        bg = dc.create_image(px(x), px(y), anchor="nw", image=normal, tags=tag)
+        dc.create_text(px(x + w / 2), px(y + 15), text=text, font=self.f_text,
+                       fill="white" if primary else T.label, tags=tag)
+        dc.tag_bind(tag, "<Enter>", lambda e: dc.itemconfigure(bg, image=hover))
+        dc.tag_bind(tag, "<Leave>", lambda e: dc.itemconfigure(bg, image=normal))
+        dc.tag_bind(tag, "<ButtonRelease-1>", lambda e: command())
+
+    def pick_color(self, color):
+        self.dlg_color = color
+        for item, c in zip(self.dlg_swatches, TAG_COLORS):
+            self.dc.itemconfigure(item, image=self.res.tag_swatch(c, c == color))
+
+    def browse_folder(self):
+        start = self.dlg_field.get().strip() or self.folder
+        while start and not os.path.isdir(start):
+            parent = os.path.dirname(start)
+            start = "" if parent == start else parent
+        self.modal = True  # системный диалог — не повод закрывать наши окна
+        try:
+            path = filedialog.askdirectory(parent=self.dialog.win, title="Папка для сохранения",
+                                           initialdir=start or os.path.expanduser("~"), mustexist=False)
+        finally:
+            self.modal = False
+        if self.dialog:
+            if path:
+                self.dlg_field.set(os.path.normpath(path))
+            ui.to_foreground(self.dialog.win)
+            self.dlg_field.focus()
+
+    def add_folder(self):
+        raw = self.dlg_field.get().strip().strip('"')
+        path = os.path.expandvars(os.path.expanduser(raw))
+        if not raw or not os.path.splitdrive(path)[0] or not os.path.isabs(path):
+            self.dc.itemconfigure(self.dlg_err, text="Нужен полный путь, например D:\\Видео\\Шортсы")
+            return
+        path = os.path.normpath(path)
+        folders = [f for f in load_settings()["folders"] if not same_path(f["path"], path)]
+        folders.append({"path": path, "color": self.dlg_color})
+        self.folder = path  # новая папка сразу становится текущей
+        save_settings(folders=folders, folder=path)
+        self.close_dialog()
+        self.update_folder_icon()
+
+    def close_dialog(self, refocus=True):
+        if not self.dialog:
+            return
+        if refocus and not self.closed:
+            ui.to_foreground(self.root)
+            self.field.focus()
+        self.dialog.destroy()
+        self.dialog = None
 
     # ---------- загрузка ----------
     def prefill(self):
@@ -525,6 +871,9 @@ class App:
             self.show_error("Нужна ссылка", "Вставьте ссылку на видео, начинающуюся с http")
             return
         self.close_menu()
+        self.close_folders()
+        self.set_dots(False)
+        save_settings(folder=self.folder)  # «последняя папка сохранения» — для следующих окон
         self.job += 1
         self.cancel = threading.Event()
         self.mode, self.result, self.title, self.progress = "busy", None, "", None
@@ -534,6 +883,7 @@ class App:
         self.draw_progress()
         q = QUALITIES[self.q][1]
         kw = {"audio": True} if q == "audio" else {"quality": q}
+        kw["output"] = self.folder  # если папки ещё нет — ytfast.download её создаст
         t = threading.Thread(target=self.work, args=(self.job, url, kw, self.cancel), daemon=True)
         self.threads.append(t)
         t.start()
@@ -567,6 +917,8 @@ class App:
         self.check_blur()
         if self.closed:
             return
+        if self.view == "full":
+            self.update_folder_hover()
         if self.mode == "busy" and self.progress is None:
             self.spin = (self.spin + 1) % 12
             self.draw_progress()
@@ -597,7 +949,8 @@ class App:
     def on_done(self, out):
         self.mode, self.result, self.progress = "done", out, 1.0
         self.c.itemconfigure(self.d_title, text=elide(self.title or os.path.basename(out), self.f_semi, self.px(W - 36)))
-        self.status = "Сохранено в Загрузки › YouTube  ·  Enter — новая ссылка"
+        where = elide_path(os.path.dirname(out), self.f_small, self.px(W - 36 - 200))
+        self.status = f"Сохранено в {where}  ·  Enter — новая ссылка"
         self.c.itemconfigure(self.s_cap, text="Готово")
         self.layout()
         self.draw_progress()
@@ -677,8 +1030,7 @@ class App:
             return
         self.strip_hover = inside
         c = self.c
-        first = "folder" if self.mode == "done" else "expand"
-        c.itemconfigure(self.s_btns[0], image=self.img[first])
+        c.itemconfigure(self.s_btns[0], image=self.folder_img() if self.mode == "done" else self.img["expand"])
         c.itemconfigure(self.s_btns[1], image=self.img["xmark"])
         c.itemconfigure("s_hover", state="normal" if inside else "hidden")
         c.itemconfigure("s_idle", state="normal" if not inside and self.mode == "busy" else "hidden")
@@ -686,7 +1038,7 @@ class App:
     def strip_action(self, i):
         if i == 0:
             if self.mode == "done":
-                open_folder(self.result)
+                open_folder(self.result, self.folder)
             else:
                 self.to_full()
         else:

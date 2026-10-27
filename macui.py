@@ -85,6 +85,9 @@ class Theme:
             self.separator, self.hover, self.track = (255, 255, 255, 0.10), (255, 255, 255, 0.10), (255, 255, 255, 0.14)
             self.circle = (255, 255, 255, 0.13)
             self.selection = "#3F638B"
+            self.tags = {"red": "#FF453A", "orange": "#FF9F0A", "yellow": "#FFD60A", "green": "#32D74B",
+                         "blue": "#0A84FF", "purple": "#BF5AF2", "gray": "#98989D"}
+            self.input, self.input_edge = "#3A3A3C", (255, 255, 255, 0.10)
         else:
             self.tint, self.tint_amount, self.saturation = (246, 246, 248), 0.72, 1.6
             self.border, self.inner = (0, 0, 0, 0.17), None
@@ -94,6 +97,9 @@ class Theme:
             self.separator, self.hover, self.track = (0, 0, 0, 0.09), (0, 0, 0, 0.07), (0, 0, 0, 0.09)
             self.circle = (0, 0, 0, 0.06)
             self.selection = "#B3D7FF"
+            self.tags = {"red": "#FF3B30", "orange": "#FF9500", "yellow": "#FFCC00", "green": "#28CD41",
+                         "blue": "#007AFF", "purple": "#AF52DE", "gray": "#8E8E93"}
+            self.input, self.input_edge = "#FFFFFF", (0, 0, 0, 0.16)
 
 
 def rgba(hex_color, a=1.0):
@@ -325,6 +331,19 @@ def work_area():
     return r.left, r.top, r.right, r.bottom
 
 
+GetWindowThreadProcessId = _fn(_u32, "GetWindowThreadProcessId", UINT, VP, ctypes.POINTER(wt.DWORD))
+
+
+def foreground_owner():
+    """PID владельца активного окна (0 — активного окна нет, например в момент переключения)."""
+    hwnd = GetForegroundWindow()
+    if not hwnd:
+        return 0
+    pid = wt.DWORD()
+    GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
 def to_foreground(win):
     win.deiconify()
     win.lift()
@@ -469,11 +488,45 @@ def sym_magnifier(color, S, size=20):
                                       line([(12.9 * k, 12.9 * k), (17.6 * k, 17.6 * k)], 2.3 * k)), color)], S)
 
 
-def sym_folder(color, S, size=20):
+def sym_folder(color, S, size=20, fill=None):
+    """Папка; fill — полупрозрачная заливка того же цвета (для цветных папок)."""
     k = size / 20
     body = union(rrect(2 * k, 5.2 * k, 18 * k, 16.4 * k, 2.4 * k), rrect(2 * k, 3.4 * k, 9 * k, 8 * k, 1.8 * k))
-    return raster(size, size, [(union(stroke(body, 1.5 * k), line([(2.6 * k, 7.6 * k), (17.4 * k, 7.6 * k)], 1.3 * k)),
-                                color)], S)
+    layers = [(body, color[:3] + (fill,))] if fill else []
+    layers.append((union(stroke(body, 1.5 * k), line([(2.6 * k, 7.6 * k), (17.4 * k, 7.6 * k)], 1.3 * k)), color))
+    return raster(size, size, layers, S)
+
+
+def sym_dots(color, S, size=16):
+    k = size / 16
+    return raster(size, size, [(union(*(circle(x * k, 8 * k, 1.6 * k) for x in (3.5, 8, 12.5))), color)], S)
+
+
+def sym_plus(color, S, size=12):
+    k = size / 12
+    return raster(size, size, [(union(line([(6 * k, 2 * k), (6 * k, 10 * k)], 1.6 * k),
+                                      line([(2 * k, 6 * k), (10 * k, 6 * k)], 1.6 * k)), color)], S)
+
+
+def dot(color, S, size=10):
+    """Цветная метка как в Finder; без цвета — пустой кружок."""
+    c = size / 2
+    if color is None:
+        return raster(size, size, [(stroke(circle(c, c, c - 1), 1.2), (142, 142, 147, 1))], S)
+    return raster(size, size, [(circle(c, c, c - 0.5), color)], S)
+
+
+def swatch(color, S, selected, size=22):
+    """Кружок выбора цвета; выбранный — с кольцом вокруг. color=None — «без цвета»."""
+    c = size / 2
+    gray = (142, 142, 147, 1)
+    if color is None:
+        layers = [(union(stroke(circle(c, c, 6.5), 1.3), line([(c - 4.4, c + 4.4), (c + 4.4, c - 4.4)], 1.3)), gray)]
+    else:
+        layers = [(circle(c, c, 7.5 if selected else 8.5), color)]
+    if selected:
+        layers.append((stroke(circle(c, c, c - 1.2), 2), color or gray))
+    return raster(size, size, layers, S)
 
 
 def sym_xmark_circle(color, S, size=18):
