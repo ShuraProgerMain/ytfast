@@ -332,6 +332,37 @@ def work_area():
     return r.left, r.top, r.right, r.bottom
 
 
+class _MONITORINFO(ctypes.Structure):
+    _fields_ = [("cbSize", wt.DWORD), ("rcMonitor", wt.RECT), ("rcWork", wt.RECT), ("dwFlags", wt.DWORD)]
+
+
+MonitorFromWindow = _fn(_u32, "MonitorFromWindow", VP, VP, UINT)
+MonitorFromPoint = _fn(_u32, "MonitorFromPoint", VP, wt.POINT, UINT)
+GetMonitorInfoW = _fn(_u32, "GetMonitorInfoW", INT, VP, VP)
+GetCursorPos = _fn(_u32, "GetCursorPos", INT, VP)
+GetClassNameW = _fn(_u32, "GetClassNameW", INT, VP, ctypes.c_wchar_p, INT)
+
+
+def active_monitor():
+    """(экран, рабочая область) монитора с активным окном, как (l, t, r, b) в физических пикселях.
+    Если активно не окно, а рабочий стол (он растянут на все мониторы) — монитор под курсором."""
+    hwnd = GetForegroundWindow()
+    cls = ctypes.create_unicode_buffer(64)
+    if hwnd:
+        GetClassNameW(hwnd, cls, 64)
+    if hwnd and cls.value not in ("Progman", "WorkerW"):
+        mon = MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+    else:
+        pt = wt.POINT()
+        GetCursorPos(ctypes.byref(pt))
+        mon = MonitorFromPoint(pt, 2)
+    mi = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
+    if not GetMonitorInfoW(mon, ctypes.byref(mi)):
+        return (0, 0, _u32.GetSystemMetrics(0), _u32.GetSystemMetrics(1)), work_area()
+    m, w = mi.rcMonitor, mi.rcWork
+    return (m.left, m.top, m.right, m.bottom), (w.left, w.top, w.right, w.bottom)
+
+
 GetWindowThreadProcessId = _fn(_u32, "GetWindowThreadProcessId", UINT, VP, ctypes.POINTER(wt.DWORD))
 
 

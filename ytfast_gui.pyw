@@ -215,8 +215,9 @@ class Resources:
 class App:
     """Одно окно: строка Spotlight, которая при загрузке сворачивается в полоску."""
 
-    def __init__(self, daemon, res):
+    def __init__(self, daemon, res, monitor):
         self.daemon, self.res = daemon, res
+        self.screen, self.work = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
         self.S, self.T = res.S, res.T
         self.events = queue.Queue()
@@ -413,8 +414,8 @@ class App:
         else:
             c.itemconfigure("details", state="hidden")
         w, hh = px(W), px(h)
-        sw, sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
-        geom = ((sw - w) // 2, int(sh * 0.22), w, hh)
+        sl, st, sr, sb = self.screen
+        geom = (sl + (sr - sl - w) // 2, st + int((sb - st) * 0.22), w, hh)
         if self.panel.geom != geom:
             self.panel.place(*geom)
             self.field.set_bg(self.panel.crop(self.field_x, self.field_y,
@@ -426,7 +427,7 @@ class App:
         c.coords(self.field_item, -10000, -10000)  # окна-элементы не скрываются через state
         c.itemconfigure("strip", state="normal")
         self.refresh_strip()
-        l, t, r, b = ui.work_area()
+        l, t, r, b = self.work
         w, h, m = px(STRIP_W), px(STRIP_H), px(14)
         slot = self.daemon.strip_slot(self)  # несколько загрузок — полоски стопкой
         geom = (l + m, b - m - h - slot * (h + px(10)), w, h)
@@ -540,8 +541,8 @@ class App:
         rx, ry = self.root.winfo_rootx(), self.root.winfo_rooty()
         x = rx + self.c.bbox(self.pop_text)[0] - px(26)  # текст пунктов — ровно над текстом селектора
         y = ry + self.c.coords(self.pop_text)[1] - px(MENU_PAD + MENU_ITEM * self.q + MENU_ITEM / 2)
-        sh = self.root.winfo_screenheight()
-        y = int(max(px(4), min(y, sh - mh - px(4))))
+        st, sb = self.screen[1], self.screen[3]
+        y = int(max(st + px(4), min(y, sb - mh - px(4))))
         self.menu_rows = []
         iw = mw / self.S - 2 * MENU_PAD
         self.img["menu_hl"] = ui.plate(iw, MENU_ITEM, 4, ui.rgba(T.accent), self.S)
@@ -1103,7 +1104,7 @@ class Daemon:
         dark = ui.dark_mode()
         if dark != self.res.T.dark and not self.windows:  # тему Windows переключили
             self.res = Resources(self.root, dark)
-        self.windows.append(App(self, self.res))
+        self.windows.append(App(self, self.res, ui.active_monitor()))
 
     def window_closed(self, w):
         if w in self.windows:
@@ -1114,7 +1115,7 @@ class Daemon:
         return [w for w in self.windows if w.view == "strip" and not w.closed]
 
     def strip_slot(self, w):
-        strips = self.strips()
+        strips = [s for s in self.strips() if s.work == w.work]  # стопка — своя на каждом мониторе
         return strips.index(w) if w in strips else 0
 
     def restack(self):
