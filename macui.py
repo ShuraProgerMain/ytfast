@@ -10,6 +10,7 @@ Tk умеет только плоские непрозрачные прямоу�
   * TextField — однострочное поле ввода прямо на фоне панели.
 Все размеры — в «дизайн-пикселях» (как pt в macOS), умноженных на масштаб экрана S.
 """
+import colorsys
 import ctypes
 import ctypes.wintypes as wt
 import math
@@ -455,7 +456,8 @@ def arc(cx, cy, r, w, start, length):
 
 
 def raster(w, h, layers, S):
-    """Сглаженная отрисовка слоёв [(фигура, (r,g,b,a))] в PhotoImage с альфой."""
+    """Сглаженная отрисовка слоёв [(фигура, цвет)] в PhotoImage с альфой.
+    Цвет — (r,g,b,a) или функция (x, y) → (r,g,b,a) для градиентов."""
     W, H = max(1, round(w * S)), max(1, round(h * S))
     buf = bytearray(W * H * 4)
     i = 0
@@ -464,10 +466,11 @@ def raster(w, h, layers, S):
         for X in range(W):
             x = (X + 0.5) / S
             R = G = B = A = 0.0
-            for f, (lr, lg, lb, la) in layers:
+            for f, col in layers:
                 cov = 0.5 - f(x, y) * S
                 if cov <= 0:
                     continue
+                lr, lg, lb, la = col(x, y) if callable(col) else col
                 a = la * (cov if cov < 1 else 1)
                 if a <= 0:
                     continue
@@ -514,6 +517,21 @@ def dot(color, S, size=10):
     if color is None:
         return raster(size, size, [(stroke(circle(c, c, c - 1), 1.2), (142, 142, 147, 1))], S)
     return raster(size, size, [(circle(c, c, c - 0.5), color)], S)
+
+
+def swatch_custom(fill, S, selected, size=22):
+    """Кружок «свой цвет» как в macOS: радужное кольцо, внутри — выбранный свой цвет (если есть)."""
+    c = size / 2
+
+    def rainbow(x, y):
+        hue = (math.atan2(x - c, c - y) / (2 * math.pi)) % 1
+        return tuple(int(v * 255) for v in colorsys.hsv_to_rgb(hue, 0.78, 1.0)) + (1,)
+
+    r, w = (c - 1.3, 1.9) if selected else (8.2, 2.2)
+    layers = [(stroke(circle(c, c, r), w), rainbow)]
+    if fill:
+        layers.append((circle(c, c, 6.2 if selected else 4.8), fill))
+    return raster(size, size, layers, S)
 
 
 def swatch(color, S, selected, size=22):

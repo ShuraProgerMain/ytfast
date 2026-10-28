@@ -42,7 +42,7 @@ import threading  # noqa: E402
 import tkinter as tk  # noqa: E402
 import tkinter.font as tkfont  # noqa: E402
 import traceback  # noqa: E402
-from tkinter import filedialog  # noqa: E402
+from tkinter import colorchooser, filedialog  # noqa: E402
 from multiprocessing.connection import Listener  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -171,26 +171,38 @@ class Resources:
         self.sel_plates = {}  # подложки селектора по ширине текста
         self.cache = {}  # цветные папки, метки, кружки выбора цвета
 
+    def color_hex(self, color):
+        """Метка → #RRGGBB: имя из палитры Finder ("red") или свой цвет ("#3fa9f5"); None — без цвета."""
+        if color and color.startswith("#"):
+            return color
+        return self.T.tags.get(color)
+
     def folder_icon(self, color):
         """Иконка папки в цвет метки; без цвета — обычная серая."""
         key = ("folder", color)
         if key not in self.cache:
-            hexc = self.T.tags.get(color)
+            hexc = self.color_hex(color)
             self.cache[key] = ui.sym_folder(ui.rgba(hexc), self.S, fill=0.22) if hexc else self.img["folder"]
         return self.cache[key]
 
     def tag_dot(self, color):
         key = ("dot", color)
         if key not in self.cache:
-            hexc = self.T.tags.get(color)
+            hexc = self.color_hex(color)
             self.cache[key] = ui.dot(ui.rgba(hexc) if hexc else None, self.S)
         return self.cache[key]
 
     def tag_swatch(self, color, selected):
         key = ("swatch", color, selected)
         if key not in self.cache:
-            hexc = self.T.tags.get(color)
+            hexc = self.color_hex(color)
             self.cache[key] = ui.swatch(ui.rgba(hexc) if hexc else None, self.S, selected)
+        return self.cache[key]
+
+    def custom_swatch(self, color, selected):
+        key = ("custom", color, selected)
+        if key not in self.cache:
+            self.cache[key] = ui.swatch_custom(ui.rgba(color) if color else None, self.S, selected)
         return self.cache[key]
 
     def sel_plate(self, w):
@@ -772,11 +784,15 @@ class App:
 
         dc.create_text(px(18), px(90), anchor="w", text="Цвет", font=self.f_small, fill=T.secondary)
         self.dlg_color = None
+        self.dlg_custom = None  # свой цвет #RRGGBB, если выбирали
         self.dlg_swatches = []
         for i, color in enumerate(TAG_COLORS):
             item = dc.create_image(px(18 + 11 + i * 30), px(116), tags=f"sw{i}")
             dc.tag_bind(f"sw{i}", "<ButtonRelease-1>", lambda e, c=color: self.pick_color(c))
             self.dlg_swatches.append(item)
+        # «свой цвет» — после палитры, чуть отступив
+        self.dlg_custom_item = dc.create_image(px(18 + 11 + len(TAG_COLORS) * 30 + 6), px(116), tags="swc")
+        dc.tag_bind("swc", "<ButtonRelease-1>", lambda e: self.choose_custom_color())
         self.pick_color(None)
 
         self.dlg_err = dc.create_text(px(18), px(DLG_H - 33), anchor="w", text="", font=self.f_small,
@@ -814,6 +830,24 @@ class App:
         self.dlg_color = color
         for item, c in zip(self.dlg_swatches, TAG_COLORS):
             self.dc.itemconfigure(item, image=self.res.tag_swatch(c, c == color))
+        custom = bool(color and color.startswith("#"))
+        self.dc.itemconfigure(self.dlg_custom_item, image=self.res.custom_swatch(self.dlg_custom, custom))
+
+    def choose_custom_color(self):
+        """Системный выбор цвета Windows; выбранный цвет попадает в радужный кружок."""
+        start = self.dlg_custom or self.res.color_hex(self.dlg_color) or self.T.accent
+        self.modal = True  # системный диалог — не повод закрывать наши окна
+        try:
+            _, hexc = colorchooser.askcolor(color=start, parent=self.dialog.win, title="Свой цвет папки")
+        finally:
+            self.modal = False
+        if not self.dialog:
+            return
+        if hexc:
+            self.dlg_custom = hexc.lower()
+            self.pick_color(self.dlg_custom)
+        ui.to_foreground(self.dialog.win)
+        self.dlg_field.focus()
 
     def browse_folder(self):
         start = self.dlg_field.get().strip() or self.folder
