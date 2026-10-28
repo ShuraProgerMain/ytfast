@@ -217,7 +217,7 @@ class App:
 
     def __init__(self, daemon, res, monitor):
         self.daemon, self.res = daemon, res
-        self.screen, self.work = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
+        self.screen, self.work_area = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
         self.S, self.T = res.S, res.T
         self.events = queue.Queue()
@@ -427,7 +427,7 @@ class App:
         c.coords(self.field_item, -10000, -10000)  # окна-элементы не скрываются через state
         c.itemconfigure("strip", state="normal")
         self.refresh_strip()
-        l, t, r, b = self.work
+        l, t, r, b = self.work_area
         w, h, m = px(STRIP_W), px(STRIP_H), px(14)
         slot = self.daemon.strip_slot(self)  # несколько загрузок — полоски стопкой
         geom = (l + m, b - m - h - slot * (h + px(10)), w, h)
@@ -1115,7 +1115,7 @@ class Daemon:
         return [w for w in self.windows if w.view == "strip" and not w.closed]
 
     def strip_slot(self, w):
-        strips = [s for s in self.strips() if s.work == w.work]  # стопка — своя на каждом мониторе
+        strips = [s for s in self.strips() if s.work_area == w.work_area]  # стопка — своя на каждом мониторе
         return strips.index(w) if w in strips else 0
 
     def restack(self):
