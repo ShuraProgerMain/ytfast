@@ -1024,8 +1024,12 @@ class App:
         self.view = "strip"
         self.layout()
         self.draw_progress()
+        self.daemon.restack()  # своё место в стопке могли занять другие полоски
 
     def to_full(self):
+        for w in list(self.daemon.windows):  # развёрнутым бывает одно окно: остальные — обратно в полоску
+            if w is not self and w.view == "full" and not w.closed:
+                w.dismiss()
         self.view = "full"
         self.close_at = None
         self.had_focus = False

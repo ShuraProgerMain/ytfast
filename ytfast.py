@@ -92,6 +92,10 @@ def extract(ytdlp, url, fmt, cancel=None):
             break
         except subprocess.TimeoutExpired:
             if cancel and cancel.is_set():
+                # yt-dlp.exe — распаковщик, настоящая работа идёт в его дочернем процессе (и в node):
+                # убиваем всё дерево, иначе они доработают сами, держа наши каналы открытыми
+                subprocess.run(["taskkill", "/F", "/T", "/PID", str(p.pid)], capture_output=True,
+                               creationflags=NO_WINDOW)
                 p.kill()
                 p.communicate()
                 raise Cancelled("Загрузка отменена")
