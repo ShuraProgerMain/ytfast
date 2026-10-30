@@ -1,9 +1,9 @@
-// Две кнопки: «Скачать» рядом с «Поделиться» и круглая на миниатюре под курсором.
+// Кнопки: «Скачать» рядом с «Поделиться», круглая в панели Shorts и круглая на миниатюре под курсором.
 // YouTube — одностраничное приложение и сам перестраивает разметку, поэтому первая кнопка
 // возвращается на место наблюдателем, а ссылка берётся в момент нажатия. Вторая живёт в body:
 // внутри ссылки-миниатюры клик открывал бы ролик, а предпросмотр при наведении её перекрывал бы.
 // Клик качает в текущую папку, при наведении открывается список сохранённых папок,
-// а под роликом ещё и форма фрагмента: моменты можно брать из плеера.
+// а там, где есть плеер, ещё и форма фрагмента: моменты можно брать из него.
 (() => {
   const ICONS = {
     idle: ["M12 4v11", "M7 11l5 5 5-5", "M5 20h14"],
@@ -115,7 +115,7 @@
     menuTimer = setTimeout(() => {
       chrome.runtime.sendMessage({ type: "folders" }, (res) => {
         if (chrome.runtime.lastError || !res || !res.ok || menuOwner !== owner) return;
-        if (res.folders.length > 1 || owner === main) showMenu(owner, res.folders, res.current);
+        if (res.folders.length > 1 || owner !== thumb) showMenu(owner, res.folders, res.current);
       });
     }, MENU_OPEN_DELAY);
   }
@@ -152,7 +152,7 @@
 
   function showMenu(owner, folders, current) {
     const rows = folders.length > 1 ? folders.map((f) => folderRow(owner, f, current)) : [];
-    if (owner === main) rows.unshift(sectionRow(owner, folders, current));
+    if (owner !== thumb) rows.unshift(sectionRow(owner, folders, current));
     menu.replaceChildren(...rows);
     placeMenu(owner);
   }
@@ -411,8 +411,25 @@
     if (bar && main.el.parentElement !== bar) bar.append(main.el);
   }
 
-  new MutationObserver(placeMain).observe(document.documentElement, { childList: true, subtree: true });
+  // ---------- страница Shorts ----------
+  const shorts = makeButton("ytfast-btn ytfast-shorts", "", () => linkFor(location.href));
+
+  function placeShorts() {
+    if (!location.pathname.startsWith("/shorts/")) return;
+    // панелей может быть несколько, пока лента прокручивается: нужна та, что сейчас на экране
+    const bar = [...document.querySelectorAll("reel-action-bar-view-model")].find((el) => {
+      const r = el.getBoundingClientRect();
+      return r.height > 0 && r.top < window.innerHeight && r.bottom > 0;
+    });
+    if (bar && shorts.el.parentElement !== bar) bar.prepend(shorts.el);
+  }
+
+  new MutationObserver(() => {
+    placeMain();
+    placeShorts();
+  }).observe(document.documentElement, { childList: true, subtree: true });
   placeMain();
+  placeShorts();
 
   // ---------- миниатюры ----------
   // Предпросмотр YouTube ложится поверх миниатюры, забирает события мыши, а сам элемент может заменить

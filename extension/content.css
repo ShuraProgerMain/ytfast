@@ -35,6 +35,26 @@
 }
 .ytfast-thumb.ytfast-visible { display: inline-flex; }
 
+/* в панели Shorts: как соседние кнопки, с подписью снизу */
+.ytfast-shorts {
+  position: relative;
+  width: 48px;
+  height: 48px;
+  margin: 0 0 30px;
+  padding: 0;
+  border-radius: 50%;
+}
+.ytfast-shorts svg { width: 24px; height: 24px; }
+.ytfast-shorts::after {
+  content: "Скачать";
+  position: absolute;
+  top: 52px;
+  left: 50%;
+  transform: translateX(-50%);
+  color: var(--yt-spec-text-primary, currentColor);
+  font: 400 12px/18px Roboto, Arial, sans-serif;
+}
+
 /* панель в духе macOS Big Sur: размытый фон, тонкая кромка, мягкая тень */
 .ytfast-menu {
   --yf-text: #f5f5f7;
