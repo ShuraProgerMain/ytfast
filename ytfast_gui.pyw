@@ -215,7 +215,7 @@ class Resources:
 class App:
     """Одно окно: строка Spotlight, которая при загрузке сворачивается в полоску."""
 
-    def __init__(self, daemon, res, monitor):
+    def __init__(self, daemon, res, monitor, url=None):
         self.daemon, self.res = daemon, res
         self.screen, self.work_area = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
@@ -264,10 +264,15 @@ class App:
         root.bind("<Up>", lambda e: self.menu_move(-1))
         self.c.bind("<Button-1>", self.click_canvas, add="+")
 
-        self.prefill()
-        self.layout()
-        ui.to_foreground(root)
-        self.field.focus()
+        if url:  # кнопка в браузере: сразу качаем в полоске, фокус остаётся в браузере
+            self.view = "strip"
+            self.field.set(url)
+            self.start()
+        else:
+            self.prefill()
+            self.layout()
+            ui.to_foreground(root)
+            self.field.focus()
         root.after(60, self.poll)
 
     def px(self, n):
@@ -1096,7 +1101,9 @@ class Daemon:
         root.report_callback_exception = lambda *exc: log("".join(traceback.format_exception(*exc)))
         self.windows = []
         self.res = Resources(root, ui.dark_mode())
+        self.links = queue.Queue()  # ссылки от кнопки в браузере
         root.bind("<<Show>>", lambda e: self.show())
+        root.bind("<<Download>>", lambda e: self.download())
         threading.Thread(target=self.hotkey_loop, daemon=True).start()
         threading.Thread(target=self.pipe_loop, daemon=True).start()
 
@@ -1105,10 +1112,17 @@ class Daemon:
             if w.view == "full":
                 w.hotkey()
                 return
+        self.open_window()
+
+    def download(self):
+        while not self.links.empty():
+            self.open_window(self.links.get())
+
+    def open_window(self, url=None):
         dark = ui.dark_mode()
         if dark != self.res.T.dark and not self.windows:  # тему Windows переключили
             self.res = Resources(self.root, dark)
-        self.windows.append(App(self, self.res, ui.active_monitor()))
+        self.windows.append(App(self, self.res, ui.active_monitor(), url))
 
     def window_closed(self, w):
         if w in self.windows:
@@ -1120,7 +1134,7 @@ class Daemon:
 
     def strip_slot(self, w):
         strips = [s for s in self.strips() if s.work_area == w.work_area]  # стопка — своя на каждом мониторе
-        return strips.index(w) if w in strips else 0
+        return strips.index(w) if w in strips else len(strips)  # новая полоска — поверх стопки
 
     def restack(self):
         for w in self.strips():
@@ -1145,8 +1159,12 @@ class Daemon:
         while True:
             try:
                 with listener.accept() as conn:
-                    if conn.recv_bytes() == b"show":
+                    msg = conn.recv_bytes()
+                    if msg == b"show":
                         self.root.event_generate("<<Show>>", when="tail")
+                    elif msg.startswith(b"download "):
+                        self.links.put(msg[len(b"download "):].decode("utf-8"))
+                        self.root.event_generate("<<Download>>", when="tail")
             except (OSError, EOFError):
                 pass
 

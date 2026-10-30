@@ -1,0 +1,18 @@
+.ytfast-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 36px;
+  margin-left: 8px;
+  padding: 0 16px 0 12px;
+  border: none;
+  border-radius: 18px;
+  background: var(--yt-spec-badge-chip-background, rgba(128, 128, 128, 0.2));
+  color: var(--yt-spec-text-primary, currentColor);
+  font: 500 14px/36px Roboto, Arial, sans-serif;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.ytfast-btn:hover { background: var(--yt-spec-button-chip-background-hover, rgba(128, 128, 128, 0.3)); }
+.ytfast-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
