@@ -73,42 +73,48 @@
   placeMain();
 
   // ---------- миниатюры ----------
-  let current = null; // ссылка-миниатюра под курсором
-  let currentLink = null; // запомнена при наведении: уходя на кнопку, курсор закрывает предпросмотр, и YouTube очищает его href
-  const thumb = makeButton("ytfast-btn ytfast-thumb", "", () => currentLink);
+  // Предпросмотр YouTube ложится поверх миниатюры, забирает события мыши, а сам элемент может заменить
+  // или очистить. Поэтому при наведении запоминаем ссылку и прямоугольник и дальше живём только по ним.
+  let hovered = null; // { el, link, rect, scrollY } — миниатюра под курсором
+  const thumb = makeButton("ytfast-btn ytfast-thumb", "", () => hovered && hovered.link);
   document.body.append(thumb.el);
 
   function hideThumb() {
-    current = null;
+    hovered = null;
     thumb.el.classList.remove("ytfast-visible");
   }
 
-  function showThumb(link, rect) {
-    current = link;
-    currentLink = linkFor(link.href);
+  function showThumb(el, link, rect) {
+    hovered = { el, link, rect, scrollY: window.scrollY };
     thumb.reset();
     thumb.el.style.top = `${rect.top + 8}px`;
-    thumb.el.style.left = `${rect.right - 8 - 36}px`;
+    thumb.el.style.left = `${rect.left + 8}px`; // в правом углу YouTube показывает свои кнопки
     thumb.el.classList.add("ytfast-visible");
   }
 
   document.addEventListener("mouseover", (e) => {
     if (!(e.target instanceof Element) || thumb.el.contains(e.target)) return;
-    const link = e.target.closest(THUMB_LINK);
-    if (!link || link === current || !link.querySelector("img") || !linkFor(link.href)) return;
-    const rect = link.getBoundingClientRect();
-    if (rect.width >= THUMB_MIN_WIDTH) showThumb(link, rect);
+    const el = e.target.closest(THUMB_LINK);
+    if (!el || !el.querySelector("img")) return;
+    const link = linkFor(el.href);
+    if (!link || (hovered && hovered.link === link)) return; // предпросмотр того же ролика — кнопка остаётся
+    const rect = el.getBoundingClientRect();
+    if (rect.width >= THUMB_MIN_WIDTH) showThumb(el, link, rect);
   }, true);
 
-  // По геометрии, а не по mouseout: предпросмотр YouTube ложится поверх миниатюры и забирает события
   document.addEventListener("mousemove", (e) => {
-    if (!current || thumb.el.contains(e.target)) return;
-    const r = current.getBoundingClientRect();
-    const inside = e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom;
-    if (!inside || !current.isConnected) hideThumb();
+    if (!hovered || thumb.el.contains(e.target)) return;
+    const r = hovered.rect;
+    if (e.clientX < r.left || e.clientX >= r.right || e.clientY < r.top || e.clientY >= r.bottom) hideThumb();
   }, true);
 
-  document.addEventListener("scroll", hideThumb, { capture: true, passive: true });
+  // Внутри предпросмотра своя прокрутка: прячемся, только когда сдвинулась сама миниатюра
+  document.addEventListener("scroll", (e) => {
+    if (!hovered) return;
+    const moved = e.target === document ? window.scrollY !== hovered.scrollY : e.target.contains(hovered.el);
+    if (moved) hideThumb();
+  }, { capture: true, passive: true });
+
   document.documentElement.addEventListener("mouseleave", hideThumb);
   document.addEventListener("yt-navigate-start", hideThumb);
 })();
