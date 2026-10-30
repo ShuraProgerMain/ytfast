@@ -26,6 +26,7 @@ from urllib.parse import urlsplit
 
 CHUNK = 1 << 20  # 1 MiB: при ~100 КБ/с на соединение кусок качается ~10 с
 MIN_STEAL = 128 * 1024  # меньше этого остаток у другого потока не отбираем
+BLOCK_RETRIES = (0, 0.5, 1, 1, 2, 2, 3, 4, 4)  # паузы между попытками скачать блок для ffmpeg, с
 TIMEOUT = 8  # секунд без данных — соединение считаем зависшим
 DEFAULT_OUT = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
 TOOLS_DIR = os.path.join(os.environ.get("LOCALAPPDATA", ""), "YTFast", "bin")  # сюда кладёт install.ps1
@@ -427,6 +428,8 @@ class RangeProxy:
         self.streams, self.connections = streams, connections
         self.conns = queue.LifoQueue()  # keep-alive: новый запрос ffmpeg не платит за рукопожатие TLS
         self.bytes = 0
+        self.error = None  # последняя ошибка YouTube: у ffmpeg от неё останется только обрыв потока
+        self.closed = threading.Event()
         self.token = os.urandom(8).hex()  # в мосту подписанные ссылки: чужой процесс на этой машине их не получит
         proxy = self
 
@@ -464,13 +467,17 @@ class RangeProxy:
         return f"http://127.0.0.1:{self.server.server_address[1]}/{self.token}/{i}"
 
     def close(self):
+        self.closed.set()
         self.server.shutdown()
         self.server.server_close()
         while not self.conns.empty():
             self.conns.get().close()
 
     def block(self, s, a, b):
-        for attempt in range(4):
+        # свежая ссылка первые секунды может отвечать 403: повторы с паузами, как в Downloader
+        for delay in BLOCK_RETRIES:
+            if self.closed.wait(delay):
+                break
             try:
                 c = self.conns.get_nowait()
             except queue.Empty:
@@ -480,10 +487,11 @@ class RangeProxy:
                 if len(data) == b - a + 1:
                     self.conns.put(c)
                     return data
-            except (OSError, http.client.HTTPException):
-                pass
+                self.error = f"вместо {b - a + 1} байт пришло {len(data)}"
+            except (OSError, http.client.HTTPException) as e:
+                self.error = str(e) or type(e).__name__
             c.close()
-        raise OSError("не удалось скачать блок")
+        raise OSError(self.error or "мост закрыт")
 
     def serve(self, s, a, b, out):
         offsets = list(range(a, b + 1, CHUNK))
@@ -623,8 +631,13 @@ def download_section(info, fmts, ffmpeg, section, output, connections, log, on_p
         if len(streams) > 1:
             run_ffmpeg([ffmpeg, "-y", "-loglevel", "error", "-i", parts[0], "-i", parts[1], "-map", "0", "-map", "1",
                         "-c", "copy", out], cancel)
-    except Error:
+    except Cancelled:
         remove_quietly(out, *parts)
+        raise
+    except Error as e:
+        remove_quietly(out, *parts)
+        if proxy.error:
+            raise Error(f"YouTube не отдал видео ({proxy.error}). Попробуйте ещё раз.") from e
         raise
     finally:
         proxy.close()
