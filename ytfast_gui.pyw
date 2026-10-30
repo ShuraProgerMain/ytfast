@@ -60,6 +60,7 @@ STRIP_W, STRIP_H = 330, 60  # полоска загрузки
 MENU_ITEM, MENU_PAD = 22, 5
 FOLDER_ROW, FOLDERS_W = 26, 340  # список папок
 DLG_W, DLG_H = 440, 190  # окно «добавить папку»
+SECT_H, TIME_W = 50, 90  # строка «от — до» и её поля
 TAG_COLORS = [None, "red", "orange", "yellow", "green", "blue", "purple", "gray"]  # как метки в Finder
 
 
@@ -159,6 +160,8 @@ class Resources:
             "track": ui.plate(W - 36, 6, 3, T.track, S),
             "seg": ui.plate(120, 6, 3, acc, S),
             "dots": ui.sym_dots(sec, S),
+            "cut": ui.sym_scissors(sec, S),
+            "cut_on": ui.sym_scissors(acc, S),
             "hover18": ui.plate(18, 30, 6, T.hover, S),
             "clear18": ui.plate(18, 30, 6, (0, 0, 0, 0), S),
             "plus": ui.sym_plus(ui.rgba(T.label), S),
@@ -215,7 +218,7 @@ class Resources:
 class App:
     """Одно окно: строка Spotlight, которая при загрузке сворачивается в полоску."""
 
-    def __init__(self, daemon, res, monitor, url=None, folder=None):
+    def __init__(self, daemon, res, monitor, url=None, folder=None, section=None):
         self.daemon, self.res = daemon, res
         self.screen, self.work_area = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
@@ -243,6 +246,8 @@ class App:
         self.folders_pop = None  # выпадающий список папок
         self.dialog = None  # окно «добавить папку»
         self.modal = False  # открыт системный диалог выбора папки
+        self.section = section  # (от, до) в секундах от кнопки в браузере
+        self.sect_open = False  # открыта строка «от — до»
         self.dots_on = False
         self.dots_armed = True
         self.dots_since = self.leave_since = None
@@ -307,8 +312,16 @@ class App:
         c.create_image(self.dots_x + px(9), cy, image=self.img["dots"], tags=("full", "dots"))
         c.tag_bind("dots", "<ButtonRelease-1>", lambda e: self.toggle_folders())
 
+        # ножницы: скачать только фрагмент
+        cut_x = bx - px(2 + 30)
+        self.cut_bg = c.create_image(cut_x, cy - px(15), anchor="nw", image=self.img["clear30"], tags=("full", "cut"))
+        self.cut_icon = c.create_image(cut_x + px(15), cy, image=self.img["cut"], tags=("full", "cut"))
+        c.tag_bind("cut", "<Enter>", lambda e: c.itemconfigure(self.cut_bg, image=self.img["hover30"]))
+        c.tag_bind("cut", "<Leave>", lambda e: c.itemconfigure(self.cut_bg, image=self.img["clear30"]))
+        c.tag_bind("cut", "<ButtonRelease-1>", lambda e: self.toggle_section())
+
         # селектор качества: просто текст и неяркая стрелка, подложка — только при наведении
-        self.sel_r = bx - px(4)
+        self.sel_r = cut_x - px(4)
         self.sel_hover = False
         self.pop = c.create_image(0, cy - px(14), anchor="nw", tags=("full", "pop"))
         self.pop_text = c.create_text(self.sel_r - px(22), cy, anchor="e", text=QUALITIES[self.q][0],
@@ -326,6 +339,8 @@ class App:
         self.field = ui.TextField(c, T, self.f_field, self.field_w, self.field_h, "Вставьте ссылку на видео")
         self.field_item = c.create_window(fx, self.field_y, anchor="nw", window=self.field.c, tags="full")
 
+        self.build_section()
+
         # подробности: появляются под строкой во время загрузки, после неё и при ошибке
         x0 = px(18)
         self.sep = c.create_image(0, px(ROW), anchor="nw", tags=("full", "details"))
@@ -337,6 +352,46 @@ class App:
         self.bar_w = W - 36
         c.itemconfigure(self.sep, image=self.img["sep"])
         c.itemconfigure(self.bar_track, image=self.img["track"])
+
+    def build_section(self):
+        """Строка «от — до» под ссылкой."""
+        px, c, T = self.px, self.c, self.T
+        y = ROW + SECT_H / 2
+        self.sect_sep = c.create_image(0, px(ROW), anchor="nw", image=self.img["sep"], tags=("full", "sect"))
+        self.img["time_field"] = ui.raster(TIME_W, 30, [(ui.rrect(0, 0, TIME_W, 30, 6), T.input_edge),
+                                                       (ui.rrect(1, 1, TIME_W - 1, 29, 5), ui.rgba(T.input))], self.S)
+        self.sect_fields = []
+        x = 18
+        for label, hint in (("От", "начало"), ("До", "конец")):
+            text = c.create_text(px(x), px(y), anchor="w", text=label, font=self.f_text, fill=T.secondary, tags=("full", "sect"))
+            fx = x + 28
+            c.create_image(px(fx), px(y - 15), anchor="nw", image=self.img["time_field"], tags=("full", "sect"))
+            field = ui.TextField(c, T, self.f_text, px(TIME_W - 18), px(24), hint)
+            field.set_bg(ui.solid(px(TIME_W - 18), px(24), ui.rgba(T.input)))
+            item = c.create_window(-10000, -10000, anchor="nw", window=field.c)
+            self.sect_fields.append((field, item, px(fx + 9), px(y - 12)))
+            x = fx + TIME_W + 18
+        c.create_text(px(x), px(y), anchor="w", text="Например, 1:20. Пусто — от начала или до конца",
+                      font=self.f_small, fill=T.secondary, tags=("full", "sect"))
+        self.sec_from, self.sec_to = self.sect_fields[0][0], self.sect_fields[1][0]
+        for w in (self.field, self.sec_from, self.sec_to):
+            w.c.bind("<Tab>", lambda e, w=w: self.next_field(w))
+
+    def next_field(self, current):
+        order = [self.field, self.sec_from, self.sec_to] if self.sect_open else [self.field]
+        order[(order.index(current) + 1) % len(order)].focus()
+        return "break"
+
+    def place_section(self, show):
+        self.c.itemconfigure("sect", state="normal" if show else "hidden")
+        for field, item, x, y in self.sect_fields:  # окна-элементы не скрываются через state
+            self.c.coords(item, x if show else -10000, y if show else -10000)
+
+    def toggle_section(self):
+        self.sect_open = not self.sect_open
+        self.c.itemconfigure(self.cut_icon, image=self.img["cut_on" if self.sect_open else "cut"])
+        self.layout()
+        (self.sec_from if self.sect_open else self.field).focus()
 
     def folder_img(self):
         return self.res.folder_icon(folder_color(self.folder))
@@ -395,13 +450,17 @@ class App:
         editable = self.mode in ("input", "error")
         self.field.set_readonly(not editable)
         c.itemconfigure("pop", state="normal" if editable else "hidden")
+        c.itemconfigure("cut", state="normal" if editable else "hidden")
+        show_section = self.sect_open and editable
+        self.place_section(show_section)
         c.itemconfigure(self.btn_icon, image=self.img["stop"] if self.mode == "busy" else self.folder_img())
         c.itemconfigure("dots", state="normal" if self.dots_on and editable else "hidden")
 
-        h = ROW
+        h = top = ROW + SECT_H if show_section else ROW
         if self.mode in ("busy", "done") or (self.mode == "error" and self.status):
             c.itemconfigure("details", state="normal")
-            y = ROW + 14
+            c.coords(self.sep, 0, px(top))
+            y = top + 14
             c.coords(self.d_title, px(18), px(y))
             y += 17 + 8
             show_bar = self.mode in ("busy", "done")
@@ -430,6 +489,7 @@ class App:
         px, c = self.px, self.c
         c.itemconfigure("full", state="hidden")
         c.coords(self.field_item, -10000, -10000)  # окна-элементы не скрываются через state
+        self.place_section(False)
         c.itemconfigure("strip", state="normal")
         self.refresh_strip()
         l, t, r, b = self.work_area
@@ -910,6 +970,13 @@ class App:
         if not url.startswith("http"):
             self.show_error("Нужна ссылка", "Вставьте ссылку на видео, начинающуюся с http")
             return
+        section = self.section
+        if self.sect_open:
+            try:
+                section = ytfast.parse_section(self.sec_from.get(), self.sec_to.get())
+            except ValueError as e:
+                self.show_error("Неверный фрагмент", str(e))
+                return
         self.close_menu()
         self.close_folders()
         self.set_dots(False)
@@ -919,11 +986,15 @@ class App:
         self.mode, self.result, self.title, self.progress = "busy", None, "", None
         self.c.itemconfigure(self.d_title, text="Получаю ссылки…")
         self.status = f"Качество: {QUALITIES[self.q][0]}"
+        if section:
+            end = ytfast.format_time(section[1]) if section[1] else "конца"
+            self.status += f"  ·  фрагмент {ytfast.format_time(section[0])} — {end}"
         self.layout()
         self.draw_progress()
         q = QUALITIES[self.q][1]
         kw = {"audio": True} if q == "audio" else {"quality": q}
         kw["output"] = self.folder  # если папки ещё нет — ytfast.download её создаст
+        kw["section"] = section
         t = threading.Thread(target=self.work, args=(self.job, url, kw, self.cancel), daemon=True)
         self.threads.append(t)
         t.start()
@@ -1019,6 +1090,9 @@ class App:
 
     def reset(self):
         self.mode, self.result, self.status = "input", None, ""
+        self.section = None
+        self.sec_from.set("")
+        self.sec_to.set("")
         self.field.set("")
         self.layout()
         self.prefill()
@@ -1101,7 +1175,7 @@ class Daemon:
         root.report_callback_exception = lambda *exc: log("".join(traceback.format_exception(*exc)))
         self.windows = []
         self.res = Resources(root, ui.dark_mode())
-        self.links = queue.Queue()  # (ссылка, папка или None) от кнопки в браузере
+        self.links = queue.Queue()  # (ссылка, папка или None, фрагмент или None) от кнопки в браузере
         root.bind("<<Show>>", lambda e: self.show())
         root.bind("<<Download>>", lambda e: self.download())
         threading.Thread(target=self.hotkey_loop, daemon=True).start()
@@ -1118,11 +1192,11 @@ class Daemon:
         while not self.links.empty():
             self.open_window(*self.links.get())
 
-    def open_window(self, url=None, folder=None):
+    def open_window(self, url=None, folder=None, section=None):
         dark = ui.dark_mode()
         if dark != self.res.T.dark and not self.windows:  # тему Windows переключили
             self.res = Resources(self.root, dark)
-        self.windows.append(App(self, self.res, ui.active_monitor(), url, folder))
+        self.windows.append(App(self, self.res, ui.active_monitor(), url, folder, section))
 
     def window_closed(self, w):
         if w in self.windows:
@@ -1164,7 +1238,7 @@ class Daemon:
                         self.root.event_generate("<<Show>>", when="tail")
                     elif msg.startswith(b"download "):
                         request = json.loads(msg[len(b"download "):])
-                        self.links.put((request["url"], request.get("folder")))
+                        self.links.put((request["url"], request.get("folder"), request.get("section")))
                         self.root.event_generate("<<Download>>", when="tail")
             except (OSError, EOFError, ValueError, KeyError):
                 pass

@@ -2,7 +2,8 @@
 // YouTube — одностраничное приложение и сам перестраивает разметку, поэтому первая кнопка
 // возвращается на место наблюдателем, а ссылка берётся в момент нажатия. Вторая живёт в body:
 // внутри ссылки-миниатюры клик открывал бы ролик, а предпросмотр при наведении её перекрывал бы.
-// Клик качает в текущую папку, при наведении открывается список сохранённых папок.
+// Клик качает в текущую папку, при наведении открывается список сохранённых папок,
+// а под роликом ещё и форма фрагмента: моменты можно брать из плеера.
 (() => {
   const ICONS = {
     idle: ["M12 4v11", "M7 11l5 5 5-5", "M5 20h14"],
@@ -50,11 +51,11 @@
       btn.disabled = false;
       show("idle", label, HINT);
     };
-    const start = (folder) => {
+    const start = (folder, section) => {
       const url = getLink();
       if (!url || btn.disabled) return;
       btn.disabled = true; // двойной клик не должен запускать две загрузки
-      chrome.runtime.sendMessage({ type: "download", url, folder }, (res) => {
+      chrome.runtime.sendMessage({ type: "download", url, folder, ...section }, (res) => {
         const ok = !chrome.runtime.lastError && res && res.ok;
         const error = (res && res.error) || "Расширение обновилось: перезагрузите страницу";
         show(ok ? "ok" : "err", ok ? "Качается" : "Ошибка", ok ? "Загрузка идёт в YT Fast" : error);
@@ -79,30 +80,35 @@
   menu.className = "ytfast-menu";
   menu.addEventListener("mouseenter", () => clearTimeout(menuTimer));
   menu.addEventListener("mouseleave", closeMenuSoon);
+  for (const type of ["keydown", "keyup", "keypress"]) { // цифры в полях не должны перематывать ролик
+    menu.addEventListener(type, (e) => e.stopPropagation());
+  }
   let menuTimer;
   let menuOwner = null; // кнопка, для которой открыт или открывается список
+  let formOpen = false; // форма фрагмента закрывается только сама: с ней работают и в плеере
 
   function closeMenu() {
     clearTimeout(menuTimer);
     menuOwner = null;
+    formOpen = false;
     menu.classList.remove("ytfast-visible");
   }
 
   function closeMenuSoon() {
     clearTimeout(menuTimer);
-    menuTimer = setTimeout(closeMenu, MENU_CLOSE_DELAY);
+    if (!formOpen) menuTimer = setTimeout(closeMenu, MENU_CLOSE_DELAY);
   }
 
   function openMenuSoon(owner) {
     clearTimeout(menuTimer);
-    if (owner.el.disabled) return;
+    if (owner.el.disabled || formOpen) return;
     if (menuOwner === owner && menu.classList.contains("ytfast-visible")) return;
     closeMenu();
     menuOwner = owner;
     menuTimer = setTimeout(() => {
       chrome.runtime.sendMessage({ type: "folders" }, (res) => {
         if (chrome.runtime.lastError || !res || !res.ok || menuOwner !== owner) return;
-        if (res.folders.length > 1) showMenu(owner, res.folders, res.current);
+        if (res.folders.length > 1 || owner === main) showMenu(owner, res.folders, res.current);
       });
     }, MENU_OPEN_DELAY);
   }
@@ -138,7 +144,131 @@
   }
 
   function showMenu(owner, folders, current) {
-    menu.replaceChildren(...folders.map((f) => folderRow(owner, f, current)));
+    const rows = folders.length > 1 ? folders.map((f) => folderRow(owner, f, current)) : [];
+    if (owner === main) rows.unshift(sectionRow(owner, folders, current));
+    menu.replaceChildren(...rows);
+    placeMenu(owner);
+  }
+
+  // ---------- фрагмент ----------
+  function parseTime(text) {
+    const parts = text.trim().replace(",", ".").split(":");
+    if (parts.length > 3 || !parts.every((x) => /^\d+(\.\d+)?$/.test(x))) return null;
+    return parts.reduce((sum, x) => sum * 60 + Number(x), 0);
+  }
+
+  function formatTime(seconds) {
+    const s = Math.floor(seconds);
+    const pad = (n) => String(n).padStart(2, "0");
+    const m = Math.floor(s / 60);
+    return m >= 60 ? `${Math.floor(m / 60)}:${pad(m % 60)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
+  }
+
+  function sectionRow(owner, folders, current) {
+    const row = document.createElement("button");
+    row.className = "ytfast-row";
+    const check = document.createElement("span");
+    check.className = "ytfast-check";
+    check.textContent = "✂";
+    const name = document.createElement("span");
+    name.className = "ytfast-name";
+    name.textContent = "Скачать фрагмент…";
+    row.append(check, name);
+    row.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showForm(owner, folders, current);
+    });
+    return row;
+  }
+
+  function showForm(owner, folders, current) {
+    formOpen = true;
+    clearTimeout(menuTimer);
+    const video = document.querySelector("video.html5-main-video");
+    const now = video ? video.currentTime : 0;
+    const timeRow = (label, value) => {
+      const row = document.createElement("label");
+      row.className = "ytfast-form-row";
+      const caption = document.createElement("span");
+      caption.className = "ytfast-caption";
+      caption.textContent = label;
+      const input = document.createElement("input");
+      input.className = "ytfast-input";
+      input.value = value;
+      const take = document.createElement("button");
+      take.className = "ytfast-small";
+      take.textContent = "Из плеера";
+      take.title = "Взять текущий момент ролика";
+      take.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (video) input.value = formatTime(video.currentTime);
+      });
+      row.append(caption, input, take);
+      return { row, input };
+    };
+    const from = timeRow("От", formatTime(now));
+    const to = timeRow("До", formatTime(video && video.duration ? Math.min(now + 30, video.duration) : now + 30));
+    const select = document.createElement("select");
+    select.className = "ytfast-input ytfast-select";
+    for (const f of folders) {
+      const option = document.createElement("option");
+      option.value = f.path;
+      option.textContent = f.path.split(/[\\/]+/).filter(Boolean).slice(-2).join("\\");
+      option.selected = samePath(f.path, current);
+      select.append(option);
+    }
+    const folderRow = document.createElement("label");
+    folderRow.className = "ytfast-form-row";
+    const caption = document.createElement("span");
+    caption.className = "ytfast-caption";
+    caption.textContent = "Куда";
+    folderRow.append(caption, select);
+    const error = document.createElement("div");
+    error.className = "ytfast-error";
+    const cancel = document.createElement("button");
+    cancel.className = "ytfast-small";
+    cancel.textContent = "Отмена";
+    const submit = document.createElement("button");
+    submit.className = "ytfast-small ytfast-primary";
+    submit.textContent = "Скачать";
+    const buttons = document.createElement("div");
+    buttons.className = "ytfast-form-buttons";
+    buttons.append(cancel, submit);
+    cancel.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      closeMenu();
+    });
+    const send = () => {
+      const start = parseTime(from.input.value);
+      const end = parseTime(to.input.value);
+      if (start === null || end === null) {
+        error.textContent = "Время пишется так: 1:20";
+      } else if (end <= start) {
+        error.textContent = "Конец должен быть позже начала";
+      } else {
+        closeMenu();
+        owner.start(select.value, { start, end });
+      }
+    };
+    submit.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      send();
+    });
+    menu.onkeydown = (e) => {
+      if (!formOpen) return;
+      if (e.key === "Enter" && e.target.tagName === "INPUT") send();
+      if (e.key === "Escape") closeMenu();
+    };
+    menu.replaceChildren(from.row, to.row, folderRow, error, buttons);
+    placeMenu(owner);
+    from.input.focus();
+  }
+
+  function placeMenu(owner) {
     menu.classList.add("ytfast-visible");
     const r = owner.el.getBoundingClientRect();
     const { width, height } = menu.getBoundingClientRect();
@@ -203,12 +333,15 @@
   // Внутри предпросмотра своя прокрутка: прячемся, только когда сдвинулась сама миниатюра
   document.addEventListener("scroll", (e) => {
     if (menu.contains(e.target)) return;
-    if (e.target === document) closeMenu();
+    if (e.target === document && !formOpen) closeMenu();
     if (!hovered) return;
     const moved = e.target === document ? window.scrollY !== hovered.scrollY : e.target.contains(hovered.el);
     if (moved) hideThumb();
   }, { capture: true, passive: true });
 
-  document.documentElement.addEventListener("mouseleave", () => { hideThumb(); closeMenu(); });
+  document.documentElement.addEventListener("mouseleave", () => {
+    hideThumb();
+    if (!formOpen) closeMenu();
+  });
   document.addEventListener("yt-navigate-start", () => { hideThumb(); closeMenu(); });
 })();

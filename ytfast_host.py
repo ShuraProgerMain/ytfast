@@ -7,6 +7,7 @@
 его ID указан в манифесте хоста (allowed_origins).
 """
 import json
+import math
 import os
 import struct
 import subprocess
@@ -37,6 +38,10 @@ def saved_folders():
         s = {}
     folders = s.get("folders", [{"path": DEFAULT_OUT, "color": None}])
     return folders, s.get("folder", folders[0]["path"] if folders else DEFAULT_OUT)
+
+
+def valid_time(t):
+    return t is None or (isinstance(t, (int, float)) and not isinstance(t, bool) and math.isfinite(t) and t >= 0)
 
 
 def same_path(a, b):
@@ -90,7 +95,11 @@ def handle(request):
         return {"ok": False, "error": "Это не ссылка на ролик YouTube"}
     if folder is not None and not (isinstance(folder, str) and any(same_path(f["path"], folder) for f in saved_folders()[0])):
         return {"ok": False, "error": "Этой папки больше нет в списке"}
-    if not deliver(b"download " + json.dumps({"url": url, "folder": folder}).encode("utf-8")):
+    start, end = request.get("start"), request.get("end")
+    if not valid_time(start) or not valid_time(end) or (end is not None and end <= (start or 0)):
+        return {"ok": False, "error": "Неверное время фрагмента"}
+    section = [start or 0, end] if start is not None or end is not None else None
+    if not deliver(b"download " + json.dumps({"url": url, "folder": folder, "section": section}).encode("utf-8")):
         return {"ok": False, "error": "Фоновый процесс YT Fast не запустился"}
     return {"ok": True}
 

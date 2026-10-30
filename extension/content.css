@@ -72,3 +72,38 @@
 .ytfast-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
 .ytfast-dot-empty { box-sizing: border-box; border: 1.5px solid currentColor; opacity: 0.5; }
 .ytfast-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* форма фрагмента */
+.ytfast-form-row { display: flex; align-items: center; gap: 8px; height: 36px; padding: 0 6px; font: 400 14px Roboto, Arial, sans-serif; }
+.ytfast-caption { flex: none; width: 36px; opacity: 0.7; }
+.ytfast-input {
+  flex: 1;
+  min-width: 0;
+  box-sizing: border-box;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid rgba(128, 128, 128, 0.5);
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: 400 14px Roboto, Arial, sans-serif;
+  outline: none;
+}
+.ytfast-input:focus { border-color: #0a84ff; }
+.ytfast-select option { color: #000; }
+.ytfast-small {
+  flex: none;
+  height: 28px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 6px;
+  background: rgba(128, 128, 128, 0.25);
+  color: inherit;
+  font: 500 12px Roboto, Arial, sans-serif;
+  cursor: pointer;
+}
+.ytfast-small:hover { background: rgba(128, 128, 128, 0.4); }
+.ytfast-primary, .ytfast-primary:hover { background: #0a84ff; color: #fff; }
+.ytfast-error { padding: 2px 6px; color: #ff453a; font: 400 12px Roboto, Arial, sans-serif; }
+.ytfast-error:empty { display: none; }
+.ytfast-form-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 6px; }

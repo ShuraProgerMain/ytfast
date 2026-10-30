@@ -536,6 +536,14 @@ def sym_dots(color, S, size=16):
     return raster(size, size, [(union(*(circle(x * k, 8 * k, 1.6 * k) for x in (3.5, 8, 12.5))), color)], S)
 
 
+def sym_scissors(color, S, size=16):
+    k = size / 16
+    return raster(size, size, [(union(stroke(circle(4.2 * k, 12 * k, 2.2 * k), 1.4 * k),
+                                      stroke(circle(11.8 * k, 12 * k, 2.2 * k), 1.4 * k),
+                                      line([(5.6 * k, 10.2 * k), (11.5 * k, 2 * k)], 1.4 * k),
+                                      line([(10.4 * k, 10.2 * k), (4.5 * k, 2 * k)], 1.4 * k)), color)], S)
+
+
 def sym_plus(color, S, size=12):
     k = size / 12
     return raster(size, size, [(union(line([(6 * k, 2 * k), (6 * k, 10 * k)], 1.6 * k),
