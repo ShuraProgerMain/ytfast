@@ -10,6 +10,14 @@
     ok: ["M5 13l4 4 10-10"],
     err: ["M6 6l12 12", "M18 6L6 18"],
   };
+  // в кадре 16×16, та же геометрия, что у значков программы (macui.py)
+  const SYMBOLS = {
+    check: ["M3 8.5l3.5 3.5L13 4.2"],
+    scissors: ["M5.6 10.2L11.5 2", "M10.4 10.2L4.5 2", "M6.4 12a2.2 2.2 0 1 1-4.4 0a2.2 2.2 0 1 1 4.4 0",
+               "M14 12a2.2 2.2 0 1 1-4.4 0a2.2 2.2 0 1 1 4.4 0"],
+    chevron: ["M4 6.2l4 4 4-4"],
+    clock: ["M14 8A6 6 0 1 1 2 8a6 6 0 1 1 12 0", "M8 4.6V8l2.2 1.4"],
+  };
   const TAGS = { // метки Finder, как в программе
     red: "#ff3b30", orange: "#ff9500", yellow: "#ffcc00", green: "#28cd41",
     blue: "#007aff", purple: "#af52de", gray: "#8e8e93",
@@ -23,6 +31,24 @@
   const SEEK_INTERVAL = 150; // как часто плеер показывает кадр при перетаскивании, мс
   const PLAYHEAD_INTERVAL = 250;
   const HINT = "Скачать через YT Fast";
+
+  function symbol(name) {
+    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 16 16");
+    svg.setAttribute("class", "ytfast-symbol");
+    for (const d of SYMBOLS[name]) {
+      const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", d);
+      svg.append(p);
+    }
+    return svg;
+  }
+
+  // Шрифт программы: тот же Inter. Если YouTube его не пустит, останется системный
+  const font = document.createElement("style");
+  font.textContent = `@font-face { font-family: "YT Fast Inter"; font-weight: 100 900; font-display: swap;
+    src: url("${chrome.runtime.getURL("Inter.ttf")}") format("truetype"); }`;
+  document.head.append(font);
 
   function linkFor(href) {
     const u = new URL(href, location.href);
@@ -125,34 +151,57 @@
     return norm(a) === norm(b);
   }
 
-  function folderRow(owner, folder, current) {
-    const row = document.createElement("button");
-    row.className = "ytfast-row";
-    row.title = folder.path;
-    const check = document.createElement("span");
-    check.className = "ytfast-check";
-    check.textContent = samePath(folder.path, current) ? "✓" : "";
+  function folderName(path) {
+    return path.split(/[\\/]+/).filter(Boolean).slice(-2).join("\\");
+  }
+
+  function makeDot(color) {
     const dot = document.createElement("span");
     dot.className = "ytfast-dot";
-    const color = TAGS[folder.color] || (/^#[0-9a-f]{6}$/i.test(folder.color || "") ? folder.color : null);
-    if (color) dot.style.background = color;
+    const fill = TAGS[color] || (/^#[0-9a-f]{6}$/i.test(color || "") ? color : null);
+    if (fill) dot.style.background = fill;
     else dot.classList.add("ytfast-dot-empty");
+    return dot;
+  }
+
+  function makeRow(mark, lead, text, onClick) {
+    const row = document.createElement("button");
+    row.className = "ytfast-row";
+    const check = document.createElement("span");
+    check.className = "ytfast-mark";
+    if (mark) check.append(symbol("check"));
     const name = document.createElement("span");
     name.className = "ytfast-name";
-    name.textContent = folder.path.split(/[\\/]+/).filter(Boolean).slice(-2).join("\\");
-    row.append(check, dot, name);
+    name.textContent = text;
+    row.append(check, lead, name);
     row.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
-      closeMenu();
-      owner.start(folder.path);
+      onClick();
     });
     return row;
   }
 
+  function folderRow(folder, current, onPick) {
+    const row = makeRow(samePath(folder.path, current), makeDot(folder.color), folderName(folder.path), () => onPick(folder));
+    row.title = folder.path;
+    return row;
+  }
+
   function showMenu(owner, folders, current) {
-    const rows = folders.length > 1 ? folders.map((f) => folderRow(owner, f, current)) : [];
-    if (owner !== thumb) rows.unshift(sectionRow(owner, folders, current));
+    const rows = folders.length > 1 ? folders.map((f) => folderRow(f, current, (picked) => {
+      closeMenu();
+      owner.start(picked.path);
+    })) : [];
+    if (owner !== thumb) {
+      const separator = document.createElement("div");
+      separator.className = "ytfast-separator";
+      if (rows.length) rows.unshift(separator);
+      const cut = document.createElement("span");
+      cut.className = "ytfast-lead";
+      cut.append(symbol("scissors"));
+      rows.unshift(makeRow(false, cut, "Скачать фрагмент…", () => showForm(owner, folders, current)));
+    }
     menu.replaceChildren(...rows);
     placeMenu(owner);
   }
@@ -171,27 +220,10 @@
     return m >= 60 ? `${Math.floor(m / 60)}:${pad(m % 60)}:${pad(s % 60)}` : `${m}:${pad(s % 60)}`;
   }
 
-  function sectionRow(owner, folders, current) {
-    const row = document.createElement("button");
-    row.className = "ytfast-row";
-    const check = document.createElement("span");
-    check.className = "ytfast-check";
-    check.textContent = "✂";
-    const name = document.createElement("span");
-    name.className = "ytfast-name";
-    name.textContent = "Скачать фрагмент…";
-    row.append(check, name);
-    row.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      showForm(owner, folders, current);
-    });
-    return row;
-  }
-
   function showForm(owner, folders, current) {
     formOpen = true;
     clearTimeout(menuTimer);
+    menu.onclick = null;
     const make = (tag, className, parent) => {
       const el = document.createElement(tag);
       if (className) el.className = className;
@@ -218,14 +250,7 @@
       input.value = value;
       const take = make("button", "ytfast-take", box);
       take.title = "Взять текущий момент из плеера";
-      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      svg.setAttribute("viewBox", "0 0 16 16");
-      for (const d of ["M8 6v8.5", "M4.8 1.8h6.4L8 6z", "M3 14.5h10"]) { // метка на линии времени
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", d);
-        svg.append(path);
-      }
-      take.append(svg);
+      take.append(symbol("clock"));
       take.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -242,13 +267,34 @@
     const place = make("label", "ytfast-place");
     make("span", "ytfast-caption", place).textContent = "Куда";
     const selectBox = make("span", "ytfast-select-box", place);
-    const select = make("select", "ytfast-input ytfast-select", selectBox);
-    for (const f of folders) {
-      const option = make("option", "", select);
-      option.value = f.path;
-      option.textContent = f.path.split(/[\\/]+/).filter(Boolean).slice(-2).join("\\");
-      option.selected = samePath(f.path, current);
-    }
+    // свой список вместо системного <select>: у того выпадающая часть рисуется браузером
+    let chosen = folders.find((f) => samePath(f.path, current)) || folders[0];
+    const popup = make("button", "ytfast-popup", selectBox);
+    const popupList = make("div", "ytfast-popup-list", selectBox);
+    const showChosen = () => {
+      const name = document.createElement("span");
+      name.className = "ytfast-name";
+      name.textContent = folderName(chosen.path);
+      popup.title = chosen.path;
+      popup.replaceChildren(makeDot(chosen.color), name, symbol("chevron"));
+    };
+    const showList = (open) => {
+      popupList.classList.toggle("ytfast-visible", open);
+      if (open) {
+        popupList.replaceChildren(...folders.map((f) => folderRow(f, chosen.path, (picked) => {
+          chosen = picked;
+          showChosen();
+          showList(false);
+        })));
+      }
+    };
+    showChosen();
+    popup.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      showList(!popupList.classList.contains("ytfast-visible"));
+    });
+    menu.onclick = () => showList(false);
     const error = make("div", "ytfast-error");
     const buttons = make("div", "ytfast-form-buttons");
     const cancel = make("button", "ytfast-push", buttons);
@@ -269,7 +315,7 @@
         error.textContent = "Конец должен быть позже начала";
       } else {
         closeMenu();
-        owner.start(select.value, { start, end });
+        owner.start(chosen.path, { start, end });
       }
     };
     submit.addEventListener("click", (e) => {
@@ -280,7 +326,10 @@
     menu.onkeydown = (e) => {
       if (!formOpen) return;
       if (e.key === "Enter" && e.target.tagName === "INPUT") send();
-      if (e.key === "Escape") closeMenu();
+      if (e.key === "Escape") {
+        if (popupList.classList.contains("ytfast-visible")) showList(false);
+        else closeMenu();
+      }
     };
     menu.replaceChildren(header, ...timeline, times, place, error, buttons);
     menu.classList.add("ytfast-menu-wide");

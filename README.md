@@ -116,7 +116,7 @@ irm https://raw.githubusercontent.com/ShuraProgerMain/ytfast/main/install.ps1 | 
 | `extension/` | расширение браузера: кнопка на странице ролика и передача ссылки программе |
 | `ytfast_host.py` | мост Native Messaging: принимает от расширения только ссылки на ролики YouTube и передаёт фоновому процессу, запуская его при необходимости |
 | `install.ps1`, `install.cmd` | установка, обновление и удаление |
-| `fonts/` | Inter под лицензией SIL OFL 1.1 (`fonts/OFL.txt`) |
+| `fonts/` | Inter под лицензией SIL OFL 1.1 (`fonts/OFL.txt`); копия шрифта лежит в `extension/`, чтобы расширение выглядело как программа |
 
 Настройки — `%APPDATA%\ytfast\settings.json`, ошибки фонового процесса —
 `%APPDATA%\ytfast\gui.log`.

@@ -1,3 +1,18 @@
+/* Все значения — из программы: цвета из macui.Theme, размеры из окна добавления папки в ytfast_gui.pyw.
+   Меняешь здесь — меняй и там, иначе окна снова разъедутся. */
+.ytfast-btn, .ytfast-menu {
+  --yf-accent: #0a84ff;
+  --yf-green: #32d74b;
+  --yf-red: #ff453a;
+  --yf-font: "YT Fast Inter", -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Arial, sans-serif;
+}
+html:not([dark]) .ytfast-btn, html:not([dark]) .ytfast-menu {
+  --yf-accent: #007aff;
+  --yf-green: #28cd41;
+  --yf-red: #ff3b30;
+}
+
+/* кнопки на странице: одна и та же, различается только размер */
 .ytfast-btn {
   display: inline-flex;
   align-items: center;
@@ -6,24 +21,23 @@
   flex: none;
   height: 36px;
   margin-left: 8px;
-  padding: 0 16px 0 12px;
+  padding: 0 14px 0 10px;
   border: none;
   border-radius: 18px;
-  background: #0a84ff;
+  background: var(--yf-accent);
   color: #fff;
-  font: 600 14px/36px Roboto, Arial, sans-serif;
+  font: 600 13px/36px var(--yf-font);
   white-space: nowrap;
   cursor: pointer;
-  box-shadow: 0 1px 4px rgba(10, 132, 255, 0.45);
-  transition: background-color 0.12s, transform 0.12s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: filter 0.12s, transform 0.12s;
 }
-.ytfast-btn:hover { background: #3a9dff; }
+.ytfast-btn:hover { filter: brightness(1.14); }
 .ytfast-btn:active { transform: scale(0.96); }
-.ytfast-btn[data-state="ok"] { background: #28a745; box-shadow: 0 1px 4px rgba(40, 167, 69, 0.45); }
-.ytfast-btn[data-state="err"] { background: #e5383b; box-shadow: 0 1px 4px rgba(229, 56, 59, 0.45); }
-.ytfast-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.ytfast-btn[data-state="ok"] { background: var(--yf-green); }
+.ytfast-btn[data-state="err"] { background: var(--yf-red); }
+.ytfast-btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 
-/* на миниатюре: над предпросмотром и любым содержимым страницы */
 .ytfast-thumb {
   display: none;
   position: fixed;
@@ -31,7 +45,6 @@
   width: 36px;
   margin: 0;
   padding: 0;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 .ytfast-thumb.ytfast-visible { display: inline-flex; }
 
@@ -52,17 +65,39 @@
   left: 50%;
   transform: translateX(-50%);
   color: var(--yt-spec-text-primary, currentColor);
-  font: 400 12px/18px Roboto, Arial, sans-serif;
+  font: 400 11px/18px var(--yf-font);
 }
 
-/* панель в духе macOS Big Sur: размытый фон, тонкая кромка, мягкая тень */
+/* панель: материал, кромка и тень как у macui.Panel */
+.ytfast-menu, .ytfast-popup-list {
+  --yf-label: #ececee;
+  --yf-secondary: #9c9ca1;
+  --yf-input: #3a3a3c;
+  --yf-input-edge: rgba(255, 255, 255, 0.1);
+  --yf-separator: rgba(255, 255, 255, 0.1);
+  --yf-track: rgba(255, 255, 255, 0.14);
+  --yf-push: rgba(255, 255, 255, 0.13);
+  --yf-push-hover: rgba(255, 255, 255, 0.26);
+  --yf-panel: rgba(30, 30, 32, 0.74);
+  --yf-saturate: 150%;
+  --yf-edge: 0 0 0 1px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+  --yf-shadow: 0 12px 36px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.35);
+}
+html:not([dark]) .ytfast-menu, html:not([dark]) .ytfast-popup-list {
+  --yf-label: #1d1d1f;
+  --yf-secondary: #6e6e73;
+  --yf-input: #fff;
+  --yf-input-edge: rgba(0, 0, 0, 0.16);
+  --yf-separator: rgba(0, 0, 0, 0.09);
+  --yf-track: rgba(0, 0, 0, 0.09);
+  --yf-push: rgba(0, 0, 0, 0.06);
+  --yf-push-hover: rgba(0, 0, 0, 0.12);
+  --yf-panel: rgba(246, 246, 248, 0.72);
+  --yf-saturate: 160%;
+  --yf-edge: 0 0 0 1px rgba(0, 0, 0, 0.17);
+  --yf-shadow: 0 12px 36px rgba(0, 0, 0, 0.26), 0 1px 3px rgba(0, 0, 0, 0.12);
+}
 .ytfast-menu {
-  --yf-text: #f5f5f7;
-  --yf-secondary: rgba(235, 235, 245, 0.6);
-  --yf-field: rgba(255, 255, 255, 0.08);
-  --yf-edge: rgba(255, 255, 255, 0.14);
-  --yf-track: rgba(255, 255, 255, 0.18);
-  --yf-push: rgba(255, 255, 255, 0.12);
   display: none;
   position: fixed;
   z-index: 2147483647;
@@ -70,110 +105,115 @@
   width: 280px;
   max-height: 320px;
   overflow-y: auto;
-  padding: 6px;
-  border: 1px solid var(--yf-edge);
-  border-radius: 12px;
-  background: rgba(40, 40, 44, 0.78);
-  -webkit-backdrop-filter: blur(30px) saturate(180%);
-  backdrop-filter: blur(30px) saturate(180%);
-  color: var(--yf-text);
-  font: 400 13px/18px -apple-system, "Segoe UI Variable Text", "Segoe UI", Roboto, Arial, sans-serif;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45), 0 2px 8px rgba(0, 0, 0, 0.25);
-}
-html:not([dark]) .ytfast-menu {
-  --yf-text: #1d1d1f;
-  --yf-secondary: rgba(60, 60, 67, 0.6);
-  --yf-field: rgba(255, 255, 255, 0.7);
-  --yf-edge: rgba(0, 0, 0, 0.12);
-  --yf-track: rgba(0, 0, 0, 0.14);
-  --yf-push: rgba(0, 0, 0, 0.07);
-  background: rgba(246, 246, 248, 0.82);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.22), 0 2px 8px rgba(0, 0, 0, 0.1);
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--yf-panel);
+  -webkit-backdrop-filter: blur(30px) saturate(var(--yf-saturate));
+  backdrop-filter: blur(30px) saturate(var(--yf-saturate));
+  color: var(--yf-label);
+  font: 400 13px/18px var(--yf-font);
+  box-shadow: var(--yf-edge), var(--yf-shadow);
 }
 .ytfast-menu.ytfast-visible { display: block; }
+
+/* строка списка: и в меню, и в выборе папки внутри формы */
 .ytfast-row {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   box-sizing: border-box;
   width: 100%;
-  height: 28px;
-  padding: 0 10px 0 6px;
+  height: 26px;
+  padding: 0 10px 0 5px;
   border: none;
-  border-radius: 6px;
+  border-radius: 5px;
   background: transparent;
   color: inherit;
   font: inherit;
   text-align: left;
   cursor: default;
 }
-.ytfast-row:hover { background: #0a84ff; color: #fff; }
-.ytfast-check { flex: none; width: 14px; font-size: 12px; text-align: center; }
-.ytfast-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.ytfast-row:hover { background: var(--yf-accent); color: #fff; }
+.ytfast-mark { flex: none; width: 14px; height: 14px; }
+.ytfast-lead { flex: none; display: block; width: 14px; height: 14px; }
+.ytfast-symbol { display: block; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.ytfast-dot { flex: none; width: 10px; height: 10px; margin: 0 2px; border-radius: 50%; }
 .ytfast-dot-empty { box-sizing: border-box; border: 1.5px solid currentColor; opacity: 0.5; }
 .ytfast-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.ytfast-separator { height: 1px; margin: 4px 8px; background: var(--yf-separator); }
 
-/* форма фрагмента */
-.ytfast-menu.ytfast-menu-wide { width: 400px; max-height: none; overflow: visible; padding: 14px 16px 12px; }
+/* форма фрагмента: как окно добавления папки */
+.ytfast-menu.ytfast-menu-wide { width: 440px; max-height: none; overflow: visible; padding: 16px 18px; border-radius: 12px; }
 .ytfast-form-header { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 6px; }
 .ytfast-form-title { font-weight: 600; }
-.ytfast-form-length { color: var(--yf-secondary); font-size: 12px; font-variant-numeric: tabular-nums; }
+.ytfast-form-length { color: var(--yf-secondary); font-size: 11px; font-variant-numeric: tabular-nums; }
 
-.ytfast-tl { position: relative; height: 28px; margin: 0 7px 8px; cursor: default; touch-action: none; user-select: none; }
+.ytfast-tl { position: relative; height: 28px; margin: 0 8px 8px; cursor: default; touch-action: none; user-select: none; }
 .ytfast-tl-track { position: absolute; left: 0; right: 0; top: 12px; height: 4px; border-radius: 2px; background: var(--yf-track); }
-.ytfast-tl-range { position: absolute; top: 0; bottom: 0; background: #0a84ff; }
+.ytfast-tl-range { position: absolute; top: 0; bottom: 0; background: var(--yf-accent); }
 .ytfast-tl-play { position: absolute; top: -5px; bottom: -5px; width: 2px; margin-left: -1px; border-radius: 1px; background: var(--yf-secondary); pointer-events: none; }
-.ytfast-tl-handle { position: absolute; top: -5px; width: 14px; height: 14px; margin-left: -7px; box-sizing: border-box; border: 0.5px solid rgba(0, 0, 0, 0.3); border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4); }
+.ytfast-tl-handle { position: absolute; top: -6px; width: 16px; height: 16px; margin-left: -8px; box-sizing: border-box; border-radius: 50%; background: #fff; box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.3); }
 
-.ytfast-times { display: flex; gap: 14px; margin-bottom: 8px; }
+.ytfast-times { display: flex; gap: 18px; margin-bottom: 10px; }
 .ytfast-time { display: flex; flex: 1; align-items: center; gap: 8px; min-width: 0; }
 .ytfast-place { display: flex; align-items: center; gap: 8px; }
 .ytfast-caption { flex: none; width: 28px; color: var(--yf-secondary); }
 .ytfast-time-box { position: relative; display: block; flex: 1; min-width: 0; }
-.ytfast-select-box { display: block; flex: 1; min-width: 0; }
-.ytfast-input {
+.ytfast-select-box { position: relative; display: block; flex: 1; min-width: 0; }
+.ytfast-input, .ytfast-popup {
   display: block;
   width: 100%;
   box-sizing: border-box;
-  height: 26px;
-  padding: 0 8px;
-  border: 1px solid var(--yf-edge);
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--yf-input-edge);
   border-radius: 6px;
-  background: var(--yf-field);
+  background: var(--yf-input);
   color: inherit;
   font: inherit;
   font-variant-numeric: tabular-nums;
   outline: none;
 }
-.ytfast-input:focus { border-color: #0a84ff; box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.35); }
-.ytfast-select option { color: #000; }
+.ytfast-input:focus { border-color: var(--yf-accent); }
+.ytfast-popup { display: flex; align-items: center; gap: 7px; text-align: left; cursor: default; }
+.ytfast-popup .ytfast-symbol { flex: none; color: var(--yf-secondary); }
+.ytfast-popup-list {
+  display: none;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 4px);
+  z-index: 1;
+  padding: 5px;
+  border-radius: 8px;
+  background: var(--yf-input);
+  box-shadow: var(--yf-edge), var(--yf-shadow);
+}
+.ytfast-popup-list.ytfast-visible { display: block; }
 .ytfast-take {
   position: absolute;
-  top: 3px;
-  right: 3px;
+  top: 5px;
+  right: 5px;
   width: 20px;
   height: 20px;
-  padding: 2px;
+  padding: 3px;
   border: none;
   border-radius: 4px;
   background: transparent;
   color: var(--yf-secondary);
 }
-.ytfast-take:hover { background: var(--yf-push); color: var(--yf-text); }
-.ytfast-take svg { display: block; width: 16px; height: 16px; fill: none; stroke-linejoin: round; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }
-.ytfast-error { margin-top: 8px; color: #ff453a; font-size: 12px; }
+.ytfast-take:hover { background: var(--yf-push); color: var(--yf-label); }
+.ytfast-error { margin-top: 8px; color: var(--yf-red); font-size: 11px; }
 .ytfast-error:empty { display: none; }
-.ytfast-form-buttons { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.ytfast-form-buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 16px; }
 .ytfast-push {
-  min-width: 76px;
-  height: 26px;
-  padding: 0 12px;
+  width: 96px;
+  height: 30px;
   border: none;
-  border-radius: 6px;
+  border-radius: 7px;
   background: var(--yf-push);
   color: inherit;
   font: inherit;
-  font-weight: 500;
 }
-.ytfast-push:hover { filter: brightness(1.15); }
-.ytfast-primary { background: linear-gradient(#2d95ff, #0a7cf0); color: #fff; box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3); }
+.ytfast-push:hover { background: var(--yf-push-hover); }
+.ytfast-primary, .ytfast-primary:hover { background: var(--yf-accent); color: #fff; }

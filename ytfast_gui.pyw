@@ -61,7 +61,7 @@ MENU_ITEM, MENU_PAD = 22, 5
 FOLDER_ROW, FOLDERS_W = 26, 340  # список папок
 DLG_W, DLG_H = 440, 190  # окно «добавить папку»
 SECT_H, TIME_W = 88, 84  # блок «от — до» и его поля
-LINE_X, LINE_Y, KNOB = 27, 24, 18  # таймлайн: отступ слева, высота от начала блока, диаметр ползунка
+LINE_X, LINE_Y, KNOB = 27, 24, 16  # таймлайн: отступ слева, высота от начала блока, диаметр ползунка
 TAG_COLORS = [None, "red", "orange", "yellow", "green", "blue", "purple", "gray"]  # как метки в Finder
 
 
@@ -768,7 +768,7 @@ class App:
             return
         px, T = self.px, self.T
         top = tk.Toplevel(self.root)
-        self.menu = ui.Panel(top, T, 7, self.S)
+        self.menu = ui.Panel(top, T, 8, self.S)
         mc = self.menu.canvas
         tw = max(self.f_text.measure(n) for n, _ in QUALITIES)
         mw = px(26 + 22) + tw
