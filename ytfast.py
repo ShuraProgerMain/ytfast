@@ -363,6 +363,12 @@ def download(url, output=DEFAULT_OUT, quality=None, audio=False, h264=False, con
     return out
 
 
+def video_duration(url, cancel=None):
+    """Длительность ролика в секундах — для таймлайна."""
+    info, _ = extract(find_tool("yt-dlp", "YTDLP"), url, format_selector(), cancel)
+    return info.get("duration") or 0
+
+
 def reserve_path(folder, name, ext):
     """Свободное имя файла: «имя.mkv», «имя (2).mkv»... Файл сразу создаётся пустым, чтобы
     параллельная загрузка не выбрала то же имя; прежние файлы никогда не перезаписываются."""

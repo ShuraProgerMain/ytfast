@@ -19,7 +19,7 @@
   const MENU_OPEN_DELAY = 150;
   const MENU_CLOSE_DELAY = 300;
   const DEFAULT_CLIP = 30; // секунд в новом фрагменте
-  const HANDLE_GRAB = 10; // пикселей вокруг ползунка, где он ещё берётся мышью
+  const HANDLE_GRAB = 9; // пикселей вокруг ползунка, где он ещё берётся мышью
   const SEEK_INTERVAL = 150; // как часто плеер показывает кадр при перетаскивании, мс
   const PLAYHEAD_INTERVAL = 250;
   const HINT = "Скачать через YT Fast";
@@ -192,22 +192,40 @@
   function showForm(owner, folders, current) {
     formOpen = true;
     clearTimeout(menuTimer);
+    const make = (tag, className, parent) => {
+      const el = document.createElement(tag);
+      if (className) el.className = className;
+      if (parent) parent.append(el);
+      return el;
+    };
     const video = document.querySelector("video.html5-main-video");
     const ad = !!document.querySelector("#movie_player.ad-showing"); // в рекламе время и длительность — её собственные
     const now = video && !ad ? video.currentTime : 0;
-    const timeRow = (label, value) => {
-      const row = document.createElement("label");
-      row.className = "ytfast-form-row";
-      const caption = document.createElement("span");
-      caption.className = "ytfast-caption";
-      caption.textContent = label;
-      const input = document.createElement("input");
-      input.className = "ytfast-input";
+    const duration = video ? video.duration : NaN;
+    const known = !ad && Number.isFinite(duration) && duration > 0; // у прямого эфира длительности нет
+    const begin = known ? Math.max(0, Math.min(now, duration - DEFAULT_CLIP)) : now;
+
+    const header = make("div", "ytfast-form-header");
+    make("div", "ytfast-form-title", header).textContent = "Фрагмент";
+    const length = make("div", "ytfast-form-length", header);
+
+    const times = make("div", "ytfast-times");
+    const timeField = (label, value) => {
+      const group = make("label", "ytfast-time", times);
+      make("span", "ytfast-caption", group).textContent = label;
+      const box = make("span", "ytfast-time-box", group);
+      const input = make("input", "ytfast-input", box);
       input.value = value;
-      const take = document.createElement("button");
-      take.className = "ytfast-small";
-      take.textContent = "Из плеера";
-      take.title = "Взять текущий момент ролика";
+      const take = make("button", "ytfast-take", box);
+      take.title = "Взять текущий момент из плеера";
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("viewBox", "0 0 16 16");
+      for (const d of ["M8 6v8.5", "M4.8 1.8h6.4L8 6z", "M3 14.5h10"]) { // метка на линии времени
+        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+        path.setAttribute("d", d);
+        svg.append(path);
+      }
+      take.append(svg);
       take.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -215,49 +233,36 @@
         input.value = formatTime(video.currentTime);
         input.dispatchEvent(new Event("input"));
       });
-      row.append(caption, input, take);
-      return { row, input };
+      return input;
     };
-    const duration = video ? video.duration : NaN;
-    const known = !ad && Number.isFinite(duration) && duration > 0; // у прямого эфира длительности нет
-    const begin = known ? Math.max(0, Math.min(now, duration - DEFAULT_CLIP)) : now;
-    const from = timeRow("От", formatTime(begin));
-    const to = timeRow("До", formatTime(known ? Math.min(begin + DEFAULT_CLIP, duration) : begin + DEFAULT_CLIP));
-    const timeline = known ? makeTimeline(video, duration, from.input, to.input) : [];
-    const select = document.createElement("select");
-    select.className = "ytfast-input ytfast-select";
+    const from = timeField("От", formatTime(begin));
+    const to = timeField("До", formatTime(known ? Math.min(begin + DEFAULT_CLIP, duration) : begin + DEFAULT_CLIP));
+    const timeline = known ? [makeTimeline(video, duration, from, to, length)] : [];
+
+    const place = make("label", "ytfast-place");
+    make("span", "ytfast-caption", place).textContent = "Куда";
+    const selectBox = make("span", "ytfast-select-box", place);
+    const select = make("select", "ytfast-input ytfast-select", selectBox);
     for (const f of folders) {
-      const option = document.createElement("option");
+      const option = make("option", "", select);
       option.value = f.path;
       option.textContent = f.path.split(/[\\/]+/).filter(Boolean).slice(-2).join("\\");
       option.selected = samePath(f.path, current);
-      select.append(option);
     }
-    const folderRow = document.createElement("label");
-    folderRow.className = "ytfast-form-row";
-    const caption = document.createElement("span");
-    caption.className = "ytfast-caption";
-    caption.textContent = "Куда";
-    folderRow.append(caption, select);
-    const error = document.createElement("div");
-    error.className = "ytfast-error";
-    const cancel = document.createElement("button");
-    cancel.className = "ytfast-small";
+    const error = make("div", "ytfast-error");
+    const buttons = make("div", "ytfast-form-buttons");
+    const cancel = make("button", "ytfast-push", buttons);
     cancel.textContent = "Отмена";
-    const submit = document.createElement("button");
-    submit.className = "ytfast-small ytfast-primary";
+    const submit = make("button", "ytfast-push ytfast-primary", buttons);
     submit.textContent = "Скачать";
-    const buttons = document.createElement("div");
-    buttons.className = "ytfast-form-buttons";
-    buttons.append(cancel, submit);
     cancel.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       closeMenu();
     });
     const send = () => {
-      const start = parseTime(from.input.value);
-      const end = parseTime(to.input.value);
+      const start = parseTime(from.value);
+      const end = parseTime(to.value);
       if (start === null || end === null) {
         error.textContent = "Время пишется так: 1:20";
       } else if (end <= start) {
@@ -277,15 +282,14 @@
       if (e.key === "Enter" && e.target.tagName === "INPUT") send();
       if (e.key === "Escape") closeMenu();
     };
-    menu.replaceChildren(...timeline, from.row, to.row, folderRow, error, buttons);
-    menu.classList.add("ytfast-menu-wide"); // шире — точнее таймлайн
+    menu.replaceChildren(header, ...timeline, times, place, error, buttons);
+    menu.classList.add("ytfast-menu-wide");
     placeMenu(owner);
-    from.input.focus();
   }
 
-  // Таймлайн: ползунки начала и конца связаны с полями времени, перетаскивание выделения двигает
+  // Таймлайн: линия с двумя ползунками, связанными с полями времени. Перетаскивание выделения двигает
   // оба, а плеер показывает кадр под ползунком. Точность — секунда: точнее можно ввести в полях.
-  function makeTimeline(video, duration, fromInput, toInput) {
+  function makeTimeline(video, duration, fromInput, toInput, length) {
     const part = (className, parent) => {
       const el = document.createElement("div");
       el.className = className;
@@ -299,13 +303,6 @@
     const play = part("ytfast-tl-play", track);
     const startHandle = part("ytfast-tl-handle", track);
     const endHandle = part("ytfast-tl-handle", track);
-    const labels = document.createElement("div");
-    labels.className = "ytfast-tl-labels";
-    const zero = part("", labels);
-    const length = part("ytfast-tl-length", labels);
-    const total = part("", labels);
-    zero.textContent = "0:00";
-    total.textContent = formatTime(duration);
 
     const pct = (t) => `${Math.max(0, Math.min(t / duration, 1)) * 100}%`;
     const paint = () => {
@@ -315,7 +312,8 @@
       startHandle.style.left = range.style.left = pct(start);
       endHandle.style.left = pct(end);
       range.style.width = `calc(${pct(end)} - ${pct(start)})`;
-      length.textContent = end > start ? `Клип ${formatTime(end - start)}` : "";
+      const clip = end > start ? `Клип ${formatTime(end - start)} · ` : "";
+      length.textContent = `${clip}весь ролик ${formatTime(duration)}`;
     };
     const paintPlayhead = () => {
       play.style.left = pct(video.currentTime);
@@ -345,11 +343,11 @@
       const end = parseTime(toInput.value);
       let shown;
       if (drag.mode === "start") {
-        shown = Math.min(t, end - 1);
-        fromInput.value = formatTime(Math.max(0, shown));
+        shown = Math.max(0, Math.min(t, end - 1));
+        fromInput.value = formatTime(shown);
       } else if (drag.mode === "end") {
-        shown = Math.max(t, start + 1);
-        toInput.value = formatTime(Math.min(duration, shown));
+        shown = Math.min(duration, Math.max(t, start + 1));
+        toInput.value = formatTime(shown);
       } else {
         const clip = end - start;
         shown = Math.max(0, Math.min(t - drag.grab, duration - clip));
@@ -392,7 +390,7 @@
     };
     bar.addEventListener("pointerup", drop);
     bar.addEventListener("pointercancel", drop);
-    return [bar, labels];
+    return bar;
   }
 
   function placeMenu(owner) {

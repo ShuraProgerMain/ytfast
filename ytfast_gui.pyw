@@ -60,7 +60,8 @@ STRIP_W, STRIP_H = 330, 60  # полоска загрузки
 MENU_ITEM, MENU_PAD = 22, 5
 FOLDER_ROW, FOLDERS_W = 26, 340  # список папок
 DLG_W, DLG_H = 440, 190  # окно «добавить папку»
-SECT_H, TIME_W = 50, 90  # строка «от — до» и её поля
+SECT_H, TIME_W = 88, 84  # блок «от — до» и его поля
+LINE_X, LINE_Y, KNOB = 27, 24, 18  # таймлайн: отступ слева, высота от начала блока, диаметр ползунка
 TAG_COLORS = [None, "red", "orange", "yellow", "green", "blue", "purple", "gray"]  # как метки в Finder
 
 
@@ -172,6 +173,7 @@ class Resources:
         self.spinner = {sz: [ui.ring(sz, w, T.track, acc, S, start=i / 12) for i in range(12)]
                         for sz, w in ((22, 2.4), (30, 3))}
         self.sel_plates = {}  # подложки селектора по ширине текста
+        self.line_images = {}
         self.cache = {}  # цветные папки, метки, кружки выбора цвета
 
     def color_hex(self, color):
@@ -207,6 +209,18 @@ class Resources:
         if key not in self.cache:
             self.cache[key] = ui.swatch_custom(ui.rgba(color) if color else None, self.S, selected)
         return self.cache[key]
+
+    def line_image(self, key, w, h, color):
+        if key not in self.line_images:
+            self.line_images[key] = ui.plate(w, h, h / 2, color, self.S)
+        return self.line_images[key]
+
+    def knob(self):
+        if "knob" not in self.line_images:
+            r = KNOB / 2
+            self.line_images["knob"] = ui.raster(KNOB, KNOB, [(ui.circle(r, r, r), (0, 0, 0, 0.3)),
+                                                              (ui.circle(r, r, r - 1), (255, 255, 255, 1))], self.S)
+        return self.line_images["knob"]
 
     def sel_plate(self, w):
         if w not in self.sel_plates:
@@ -247,7 +261,14 @@ class App:
         self.dialog = None  # окно «добавить папку»
         self.modal = False  # открыт системный диалог выбора папки
         self.section = section  # (от, до) в секундах от кнопки в браузере
-        self.sect_open = False  # открыта строка «от — до»
+        self.sect_open = False  # открыт блок «от — до»
+        self.line_url = None  # ссылка, для которой узнаём длительность
+        self.line_cancel = None
+        self.line_timer = None
+        self.line_failed = False
+        self.duration = 0
+        self.line_drag = None
+        self.fill_width = None
         self.dots_on = False
         self.dots_armed = True
         self.dots_since = self.leave_since = None
@@ -287,6 +308,8 @@ class App:
         if self.closed:
             return
         self.closed = True
+        if self.line_cancel:
+            self.line_cancel.set()
         self.close_menu(refocus=False)
         self.close_folders(refocus=False)
         self.close_dialog(refocus=False)
@@ -354,14 +377,28 @@ class App:
         c.itemconfigure(self.bar_track, image=self.img["track"])
 
     def build_section(self):
-        """Строка «от — до» под ссылкой."""
+        """Под ссылкой: таймлайн-линия с двумя ползунками и поля времени."""
         px, c, T = self.px, self.c, self.T
-        y = ROW + SECT_H / 2
         self.sect_sep = c.create_image(0, px(ROW), anchor="nw", image=self.img["sep"], tags=("full", "sect"))
+        self.line_w = W - 2 * LINE_X
+        ly = ROW + LINE_Y
+        line = ("full", "sect", "line")
+        # прозрачная подложка ловит мышь по всей высоте, линия сама тонкая
+        c.create_image(px(LINE_X - KNOB / 2), px(ly - 13), anchor="nw", tags=line,
+                       image=self.res.line_image("hit", self.line_w + KNOB, 26, (0, 0, 0, 0)))
+        self.line_track = c.create_image(px(LINE_X), px(ly - 2), anchor="nw", tags=line,
+                                         image=self.res.line_image("track", self.line_w, 4, T.track))
+        self.line_fill = c.create_image(px(LINE_X), px(ly - 2), anchor="nw", tags=line)
+        self.knob_a = c.create_image(0, px(ly), image=self.res.knob(), tags=line)
+        self.knob_b = c.create_image(0, px(ly), image=self.res.knob(), tags=line)
+        c.tag_bind("line", "<ButtonPress-1>", self.line_press)
+        c.bind("<B1-Motion>", self.line_motion, add="+")
+        c.bind("<ButtonRelease-1>", lambda e: setattr(self, "line_drag", None), add="+")
+        y = ROW + LINE_Y + 36
         self.img["time_field"] = ui.raster(TIME_W, 30, [(ui.rrect(0, 0, TIME_W, 30, 6), T.input_edge),
                                                        (ui.rrect(1, 1, TIME_W - 1, 29, 5), ui.rgba(T.input))], self.S)
         self.sect_fields = []
-        x = 18
+        x = LINE_X - KNOB / 2
         for label, hint in (("От", "начало"), ("До", "конец")):
             text = c.create_text(px(x), px(y), anchor="w", text=label, font=self.f_text, fill=T.secondary, tags=("full", "sect"))
             fx = x + 28
@@ -370,12 +407,14 @@ class App:
             field.set_bg(ui.solid(px(TIME_W - 18), px(24), ui.rgba(T.input)))
             item = c.create_window(-10000, -10000, anchor="nw", window=field.c)
             self.sect_fields.append((field, item, px(fx + 9), px(y - 12)))
+            field.on_change = self.paint_line
             x = fx + TIME_W + 18
-        c.create_text(px(x), px(y), anchor="w", text="Например, 1:20. Пусто — от начала или до конца",
-                      font=self.f_small, fill=T.secondary, tags=("full", "sect"))
+        self.clip_text = c.create_text(px(W - LINE_X + KNOB / 2), px(y), anchor="e", font=self.f_small,
+                                       fill=T.secondary, tags=("full", "sect"))
         self.sec_from, self.sec_to = self.sect_fields[0][0], self.sect_fields[1][0]
         for w in (self.field, self.sec_from, self.sec_to):
             w.c.bind("<Tab>", lambda e, w=w: self.next_field(w))
+        self.field.on_change = self.link_changed
 
     def next_field(self, current):
         order = [self.field, self.sec_from, self.sec_to] if self.sect_open else [self.field]
@@ -386,11 +425,142 @@ class App:
         self.c.itemconfigure("sect", state="normal" if show else "hidden")
         for field, item, x, y in self.sect_fields:  # окна-элементы не скрываются через state
             self.c.coords(item, x if show else -10000, y if show else -10000)
+        if show:
+            self.paint_line()
+
+    # ---------- таймлайн ----------
+    def link_changed(self):
+        if not self.sect_open:
+            return
+        if self.line_timer:
+            self.root.after_cancel(self.line_timer)
+        self.line_timer = self.root.after(400, self.load_duration)
+
+    def load_duration(self):
+        """Длительность для текущей ссылки; поля времени работают и без неё."""
+        self.line_timer = None
+        url = self.field.get().strip()
+        if url == self.line_url or self.closed:
+            return
+        if self.line_cancel:
+            self.line_cancel.set()
+        self.line_url, self.duration, self.line_failed = url, 0, False
+        if url.startswith("http"):
+            self.line_cancel = threading.Event()
+            threading.Thread(target=self.duration_work, args=(url, self.line_cancel), daemon=True).start()
+        self.paint_line()
+
+    def duration_work(self, url, cancel):
+        try:
+            self.events.put(("duration", self.job, url, ytfast.video_duration(url, cancel)))
+        except ytfast.Cancelled:
+            pass
+        except Exception:  # noqa: BLE001 — ссылка не та или YouTube отказал: остаются поля времени
+            self.events.put(("duration", self.job, url, 0))
+
+    def on_duration(self, url, duration):
+        if url == self.line_url:
+            self.duration, self.line_failed = duration, not duration
+            self.paint_line()
+
+    def section_times(self):
+        """Текущие (от, до) по полям: пусто — край ролика. None, если в полях не время."""
+        try:
+            a = ytfast.parse_time(self.sec_from.get()) if self.sec_from.get().strip() else 0.0
+            b = ytfast.parse_time(self.sec_to.get()) if self.sec_to.get().strip() else self.duration
+        except ValueError:
+            return None
+        return a, b
+
+    def line_x(self, t):
+        return self.px(LINE_X) + self.px(self.line_w) * max(0, min(t / self.duration, 1))
+
+    def paint_line(self):
+        if not self.sect_open:
+            return
+        c = self.c
+        ready = self.duration > 0
+        times = self.section_times()
+        for item in (self.line_fill, self.knob_a, self.knob_b):
+            c.itemconfigure(item, state="normal" if ready and times else "hidden")
+        if not ready:
+            text = ""
+            if self.line_failed:
+                text = "Длину ролика узнать не удалось: укажите время в полях"
+            elif self.field.get().strip().startswith("http"):
+                text = "Узнаю длину ролика…"
+            c.itemconfigure(self.clip_text, text=text)
+            return
+        total = ytfast.format_time(self.duration)
+        if not times:
+            c.itemconfigure(self.clip_text, text=f"Весь ролик {total}")
+            return
+        a, b = times[0], min(times[1], self.duration)
+        clip = f"Клип {ytfast.format_time(b - a)}  ·  " if b > a else ""
+        c.itemconfigure(self.clip_text, text=f"{clip}весь ролик {total}")
+        x0, x1 = self.line_x(a), self.line_x(b)
+        c.coords(self.knob_a, x0, c.coords(self.knob_a)[1])
+        c.coords(self.knob_b, x1, c.coords(self.knob_b)[1])
+        width = int(x1 - x0)
+        if width > 0:
+            if width != self.fill_width:
+                self.fill_width = width
+                self.img["line_fill"] = ui.solid(width, self.px(4), ui.rgba(self.T.accent))
+            c.itemconfigure(self.line_fill, image=self.img["line_fill"])
+        c.coords(self.line_fill, x0, c.coords(self.line_fill)[1])
+
+    def line_time(self, e):
+        return max(0.0, min((e.x - self.px(LINE_X)) / self.px(self.line_w), 1.0)) * self.duration
+
+    def line_press(self, e):
+        times = self.section_times()
+        if not self.duration or not times:
+            return
+        a, b = times[0], min(times[1], self.duration)
+        t = self.line_time(e)
+        grab = self.px(KNOB) / 2 / self.px(self.line_w) * self.duration
+        to_a, to_b = abs(t - a), abs(t - b)
+        mode = "start" if to_a <= to_b else "end"
+        if a < t < b and min(to_a, to_b) > grab:
+            mode = "move"
+        if to_a <= grab and to_b <= grab:  # ползунки слиплись: какой взяли, решит направление движения
+            mode = "pick"
+        self.line_drag = {"mode": mode, "x": e.x, "grab": round(t) - a}
+        if mode != "pick":
+            self.line_apply(e)
+
+    def line_motion(self, e):
+        d = self.line_drag
+        if not d:
+            return
+        if d["mode"] == "pick":
+            if abs(e.x - d["x"]) < 2:
+                return
+            d["mode"] = "start" if e.x < d["x"] else "end"
+        self.line_apply(e)
+
+    def line_apply(self, e):
+        a, b = self.section_times()
+        b = min(b, self.duration)
+        t = round(self.line_time(e))
+        d = self.line_drag
+        if d["mode"] == "start":
+            a = max(0, min(t, b - 1))
+        elif d["mode"] == "end":
+            b = min(self.duration, max(t, a + 1))
+        else:
+            clip = b - a
+            a = max(0, min(t - d["grab"], self.duration - clip))
+            b = a + clip
+        self.sec_from.set(ytfast.format_time(a))
+        self.sec_to.set(ytfast.format_time(b))
 
     def toggle_section(self):
         self.sect_open = not self.sect_open
         self.c.itemconfigure(self.cut_icon, image=self.img["cut_on" if self.sect_open else "cut"])
         self.layout()
+        if self.sect_open:
+            self.load_duration()
         (self.sec_from if self.sect_open else self.field).focus()
 
     def folder_img(self):

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "YT Fast",
-  "version": "1.5",
+  "version": "1.6",
   "description": "Кнопка «Скачать» под роликами YouTube: качает через программу YT Fast.",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnQs2888C1E4ZhuiUTPNHmFcmQMgTXxAnftkMS7AZEVcHgO0qf+MibzaD5T/LUhB5Hvet7Qv/VP45knmbK8fj7R7pxdsuvcyt3gPtXj3rB4jJ3n++VCD3WGPBdqfN+j5zzhOgamdOSE13UPgfi0a4N53KHMWE5G52tlli8OwwzCOudBuhhakAJea54cUcWD36BecZKs8U5COLB9SDVQCwhK460719vOpaN/tdDSvojSYwOMyYpSg12N1bMPdr/nPutDikuyVR6iajJ9wKAkb3DvSeSmNqVSyJmTfusY7LACgKcJvQ0xCMA0G/LkYGOdQLweWgjCwpY00h8ymZJ7XbywIDAQAB",
   "permissions": [
