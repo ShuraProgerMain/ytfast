@@ -107,3 +107,13 @@
 .ytfast-error { padding: 2px 6px; color: #ff453a; font: 400 12px Roboto, Arial, sans-serif; }
 .ytfast-error:empty { display: none; }
 .ytfast-form-buttons { display: flex; justify-content: flex-end; gap: 8px; padding: 6px; }
+
+/* таймлайн фрагмента */
+.ytfast-tl { position: relative; height: 32px; margin: 4px 12px 0; cursor: pointer; touch-action: none; user-select: none; }
+.ytfast-tl-track { position: absolute; left: 0; right: 0; top: 12px; height: 8px; border-radius: 4px; background: rgba(128, 128, 128, 0.35); }
+.ytfast-tl-range { position: absolute; top: 0; bottom: 0; background: #0a84ff; cursor: grab; }
+.ytfast-tl-play { position: absolute; top: -8px; bottom: -8px; width: 2px; margin-left: -1px; background: #ff453a; pointer-events: none; }
+.ytfast-tl-handle { position: absolute; top: -8px; width: 10px; height: 24px; margin-left: -5px; box-sizing: border-box; border: 2px solid #0a84ff; border-radius: 4px; background: #fff; cursor: ew-resize; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5); }
+.ytfast-tl-labels { display: flex; justify-content: space-between; margin: 0 7px 4px; font: 400 11px Roboto, Arial, sans-serif; opacity: 0.75; }
+.ytfast-tl-length { font-weight: 500; }
+.ytfast-menu.ytfast-menu-wide { width: 460px; max-height: none; overflow: visible; }

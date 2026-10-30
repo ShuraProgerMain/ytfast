@@ -18,6 +18,10 @@
   const THUMB_MIN_WIDTH = 100; // меньше — это уже не превью, а значок
   const MENU_OPEN_DELAY = 150;
   const MENU_CLOSE_DELAY = 300;
+  const DEFAULT_CLIP = 30; // секунд в новом фрагменте
+  const HANDLE_GRAB = 10; // пикселей вокруг ползунка, где он ещё берётся мышью
+  const SEEK_INTERVAL = 150; // как часто плеер показывает кадр при перетаскивании, мс
+  const PLAYHEAD_INTERVAL = 250;
   const HINT = "Скачать через YT Fast";
 
   function linkFor(href) {
@@ -86,9 +90,12 @@
   let menuTimer;
   let menuOwner = null; // кнопка, для которой открыт или открывается список
   let formOpen = false; // форма фрагмента закрывается только сама: с ней работают и в плеере
+  let playheadTimer;
 
   function closeMenu() {
     clearTimeout(menuTimer);
+    clearInterval(playheadTimer);
+    menu.classList.remove("ytfast-menu-wide");
     menuOwner = null;
     formOpen = false;
     menu.classList.remove("ytfast-visible");
@@ -186,7 +193,8 @@
     formOpen = true;
     clearTimeout(menuTimer);
     const video = document.querySelector("video.html5-main-video");
-    const now = video ? video.currentTime : 0;
+    const ad = !!document.querySelector("#movie_player.ad-showing"); // в рекламе время и длительность — её собственные
+    const now = video && !ad ? video.currentTime : 0;
     const timeRow = (label, value) => {
       const row = document.createElement("label");
       row.className = "ytfast-form-row";
@@ -203,13 +211,19 @@
       take.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (video) input.value = formatTime(video.currentTime);
+        if (!video) return;
+        input.value = formatTime(video.currentTime);
+        input.dispatchEvent(new Event("input"));
       });
       row.append(caption, input, take);
       return { row, input };
     };
-    const from = timeRow("От", formatTime(now));
-    const to = timeRow("До", formatTime(video && video.duration ? Math.min(now + 30, video.duration) : now + 30));
+    const duration = video ? video.duration : NaN;
+    const known = !ad && Number.isFinite(duration) && duration > 0; // у прямого эфира длительности нет
+    const begin = known ? Math.max(0, Math.min(now, duration - DEFAULT_CLIP)) : now;
+    const from = timeRow("От", formatTime(begin));
+    const to = timeRow("До", formatTime(known ? Math.min(begin + DEFAULT_CLIP, duration) : begin + DEFAULT_CLIP));
+    const timeline = known ? makeTimeline(video, duration, from.input, to.input) : [];
     const select = document.createElement("select");
     select.className = "ytfast-input ytfast-select";
     for (const f of folders) {
@@ -263,9 +277,122 @@
       if (e.key === "Enter" && e.target.tagName === "INPUT") send();
       if (e.key === "Escape") closeMenu();
     };
-    menu.replaceChildren(from.row, to.row, folderRow, error, buttons);
+    menu.replaceChildren(...timeline, from.row, to.row, folderRow, error, buttons);
+    menu.classList.add("ytfast-menu-wide"); // шире — точнее таймлайн
     placeMenu(owner);
     from.input.focus();
+  }
+
+  // Таймлайн: ползунки начала и конца связаны с полями времени, перетаскивание выделения двигает
+  // оба, а плеер показывает кадр под ползунком. Точность — секунда: точнее можно ввести в полях.
+  function makeTimeline(video, duration, fromInput, toInput) {
+    const part = (className, parent) => {
+      const el = document.createElement("div");
+      el.className = className;
+      parent.append(el);
+      return el;
+    };
+    const bar = document.createElement("div");
+    bar.className = "ytfast-tl";
+    const track = part("ytfast-tl-track", bar);
+    const range = part("ytfast-tl-range", track);
+    const play = part("ytfast-tl-play", track);
+    const startHandle = part("ytfast-tl-handle", track);
+    const endHandle = part("ytfast-tl-handle", track);
+    const labels = document.createElement("div");
+    labels.className = "ytfast-tl-labels";
+    const zero = part("", labels);
+    const length = part("ytfast-tl-length", labels);
+    const total = part("", labels);
+    zero.textContent = "0:00";
+    total.textContent = formatTime(duration);
+
+    const pct = (t) => `${Math.max(0, Math.min(t / duration, 1)) * 100}%`;
+    const paint = () => {
+      const start = parseTime(fromInput.value);
+      const end = parseTime(toInput.value);
+      if (start === null || end === null) return;
+      startHandle.style.left = range.style.left = pct(start);
+      endHandle.style.left = pct(end);
+      range.style.width = `calc(${pct(end)} - ${pct(start)})`;
+      length.textContent = end > start ? `Клип ${formatTime(end - start)}` : "";
+    };
+    const paintPlayhead = () => {
+      play.style.left = pct(video.currentTime);
+    };
+    fromInput.addEventListener("input", paint);
+    toInput.addEventListener("input", paint);
+    paint();
+    paintPlayhead();
+    clearInterval(playheadTimer);
+    playheadTimer = setInterval(paintPlayhead, PLAYHEAD_INTERVAL);
+
+    let drag = null;
+    let lastSeek = 0;
+    const seek = (t, force) => {
+      if (!force && performance.now() - lastSeek < SEEK_INTERVAL) return;
+      lastSeek = performance.now();
+      video.currentTime = t;
+      paintPlayhead();
+    };
+    const timeAt = (e) => {
+      const r = track.getBoundingClientRect();
+      return Math.max(0, Math.min((e.clientX - r.left) / r.width, 1)) * duration;
+    };
+    const apply = (e, force) => {
+      const t = Math.round(timeAt(e));
+      const start = parseTime(fromInput.value);
+      const end = parseTime(toInput.value);
+      let shown;
+      if (drag.mode === "start") {
+        shown = Math.min(t, end - 1);
+        fromInput.value = formatTime(Math.max(0, shown));
+      } else if (drag.mode === "end") {
+        shown = Math.max(t, start + 1);
+        toInput.value = formatTime(Math.min(duration, shown));
+      } else {
+        const clip = end - start;
+        shown = Math.max(0, Math.min(t - drag.grab, duration - clip));
+        fromInput.value = formatTime(shown);
+        toInput.value = formatTime(shown + clip);
+      }
+      paint();
+      seek(shown, force);
+    };
+    bar.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const start = parseTime(fromInput.value);
+      const end = parseTime(toInput.value);
+      if (start === null || end === null) return;
+      const t = timeAt(e);
+      const nearby = HANDLE_GRAB / track.getBoundingClientRect().width * duration;
+      const toStart = Math.abs(t - start);
+      const toEnd = Math.abs(t - end);
+      let mode = toStart <= toEnd ? "start" : "end";
+      if (t > start && t < end && Math.min(toStart, toEnd) > nearby) mode = "move";
+      // на длинном ролике ползунки слипаются: какой из них взяли, решит направление движения
+      if (toStart <= nearby && toEnd <= nearby) mode = "pick";
+      drag = { mode, x: e.clientX, grab: Math.round(t) - start };
+      bar.setPointerCapture(e.pointerId);
+      if (mode !== "pick") apply(e);
+    });
+    bar.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      if (drag.mode === "pick") {
+        if (Math.abs(e.clientX - drag.x) < 2) return;
+        drag.mode = e.clientX < drag.x ? "start" : "end";
+      }
+      apply(e);
+    });
+    const drop = (e) => {
+      if (!drag) return;
+      if (drag.mode !== "pick") apply(e, true);
+      drag = null;
+    };
+    bar.addEventListener("pointerup", drop);
+    bar.addEventListener("pointercancel", drop);
+    return [bar, labels];
   }
 
   function placeMenu(owner) {
