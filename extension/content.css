@@ -34,3 +34,41 @@
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.55);
 }
 .ytfast-thumb.ytfast-visible { display: inline-flex; }
+
+/* список папок */
+.ytfast-menu {
+  display: none;
+  position: fixed;
+  z-index: 2147483647;
+  box-sizing: border-box;
+  width: 280px;
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 6px;
+  border-radius: 12px;
+  background: var(--yt-spec-menu-background, #282828);
+  color: var(--yt-spec-text-primary, #fff);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
+.ytfast-menu.ytfast-visible { display: block; }
+.ytfast-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  box-sizing: border-box;
+  width: 100%;
+  height: 34px;
+  padding: 0 10px 0 6px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: 400 14px/34px Roboto, Arial, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+.ytfast-row:hover { background: #0a84ff; color: #fff; }
+.ytfast-check { flex: none; width: 14px; font-size: 13px; text-align: center; }
+.ytfast-dot { flex: none; width: 10px; height: 10px; border-radius: 50%; }
+.ytfast-dot-empty { box-sizing: border-box; border: 1.5px solid currentColor; opacity: 0.5; }
+.ytfast-name { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }

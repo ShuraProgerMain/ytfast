@@ -1,7 +1,7 @@
-// Native Messaging доступен только фоновому скрипту: кнопка на странице просит его передать ссылку программе.
+// Native Messaging доступен только фоновому скрипту: кнопка на странице просит его поговорить с программой.
 chrome.runtime.onMessage.addListener((msg, sender, reply) => {
-  if (msg.type !== "download") return;
-  chrome.runtime.sendNativeMessage("com.ytfast.host", { url: msg.url }, (res) => {
+  const request = msg.type === "folders" ? { type: "folders" } : { url: msg.url, folder: msg.folder };
+  chrome.runtime.sendNativeMessage("com.ytfast.host", request, (res) => {
     const err = chrome.runtime.lastError;
     reply(err ? { ok: false, error: "Нет связи с YT Fast: запусти install.cmd" } : res);
   });

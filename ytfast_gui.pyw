@@ -215,7 +215,7 @@ class Resources:
 class App:
     """Одно окно: строка Spotlight, которая при загрузке сворачивается в полоску."""
 
-    def __init__(self, daemon, res, monitor, url=None):
+    def __init__(self, daemon, res, monitor, url=None, folder=None):
         self.daemon, self.res = daemon, res
         self.screen, self.work_area = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
@@ -239,7 +239,7 @@ class App:
         self.spin = 0
         settings = load_settings()
         self.q = min(max(settings["quality"], 0), len(QUALITIES) - 1)
-        self.folder = settings["folder"]  # куда сохранять: по умолчанию — последняя папка сохранения
+        self.folder = folder or settings["folder"]  # куда сохранять: по умолчанию — последняя папка сохранения
         self.folders_pop = None  # выпадающий список папок
         self.dialog = None  # окно «добавить папку»
         self.modal = False  # открыт системный диалог выбора папки
@@ -1101,7 +1101,7 @@ class Daemon:
         root.report_callback_exception = lambda *exc: log("".join(traceback.format_exception(*exc)))
         self.windows = []
         self.res = Resources(root, ui.dark_mode())
-        self.links = queue.Queue()  # ссылки от кнопки в браузере
+        self.links = queue.Queue()  # (ссылка, папка или None) от кнопки в браузере
         root.bind("<<Show>>", lambda e: self.show())
         root.bind("<<Download>>", lambda e: self.download())
         threading.Thread(target=self.hotkey_loop, daemon=True).start()
@@ -1116,13 +1116,13 @@ class Daemon:
 
     def download(self):
         while not self.links.empty():
-            self.open_window(self.links.get())
+            self.open_window(*self.links.get())
 
-    def open_window(self, url=None):
+    def open_window(self, url=None, folder=None):
         dark = ui.dark_mode()
         if dark != self.res.T.dark and not self.windows:  # тему Windows переключили
             self.res = Resources(self.root, dark)
-        self.windows.append(App(self, self.res, ui.active_monitor(), url))
+        self.windows.append(App(self, self.res, ui.active_monitor(), url, folder))
 
     def window_closed(self, w):
         if w in self.windows:
@@ -1163,9 +1163,10 @@ class Daemon:
                     if msg == b"show":
                         self.root.event_generate("<<Show>>", when="tail")
                     elif msg.startswith(b"download "):
-                        self.links.put(msg[len(b"download "):].decode("utf-8"))
+                        request = json.loads(msg[len(b"download "):])
+                        self.links.put((request["url"], request.get("folder")))
                         self.root.event_generate("<<Download>>", when="tail")
-            except (OSError, EOFError):
+            except (OSError, EOFError, ValueError, KeyError):
                 pass
 
 

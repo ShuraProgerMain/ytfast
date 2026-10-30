@@ -2,8 +2,9 @@
 
 Браузер запускает этот скрипт на каждое нажатие кнопки «Скачать» и передаёт ссылку
 в stdin: 4 байта длины + JSON. Скрипт отправляет ссылку в канал фонового процесса,
-отвечает в stdout тем же форматом и завершается. Запустить его может только наше
-расширение: его ID указан в манифесте хоста (allowed_origins).
+отвечает в stdout тем же форматом и завершается. Запрос {"type": "folders"} вместо
+ссылки возвращает сохранённые папки. Запустить скрипт может только наше расширение:
+его ID указан в манифесте хоста (allowed_origins).
 """
 import json
 import os
@@ -15,6 +16,8 @@ from urllib.parse import urlparse
 
 PIPE = r"\\.\pipe\ytfast-" + os.environ.get("USERNAME", "user")
 HOSTS = {"www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com"}
+SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ytfast", "settings.json")
+DEFAULT_OUT = os.path.join(os.path.expanduser("~"), "Downloads", "YouTube")
 
 
 def valid_link(url):
@@ -23,6 +26,21 @@ def valid_link(url):
         return False
     u = urlparse(url)
     return u.scheme == "https" and u.hostname in HOSTS and (u.path == "/watch" or u.path.startswith("/shorts/"))
+
+
+def saved_folders():
+    """Те же значения по умолчанию, что в load_settings окна."""
+    try:
+        with open(SETTINGS, encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        s = {}
+    folders = s.get("folders", [{"path": DEFAULT_OUT, "color": None}])
+    return folders, s.get("folder", folders[0]["path"] if folders else DEFAULT_OUT)
+
+
+def same_path(a, b):
+    return os.path.normcase(os.path.normpath(a)) == os.path.normcase(os.path.normpath(b))
 
 
 def send_to_daemon(msg):
@@ -62,10 +80,17 @@ def deliver(msg):
 
 
 def handle(request):
-    url = request.get("url") if isinstance(request, dict) else None
+    if not isinstance(request, dict):
+        return {"ok": False, "error": "Непонятный запрос"}
+    if request.get("type") == "folders":
+        folders, current = saved_folders()
+        return {"ok": True, "folders": folders, "current": current}
+    url, folder = request.get("url"), request.get("folder")
     if not valid_link(url):
         return {"ok": False, "error": "Это не ссылка на ролик YouTube"}
-    if not deliver(b"download " + url.encode("utf-8")):
+    if folder is not None and not (isinstance(folder, str) and any(same_path(f["path"], folder) for f in saved_folders()[0])):
+        return {"ok": False, "error": "Этой папки больше нет в списке"}
+    if not deliver(b"download " + json.dumps({"url": url, "folder": folder}).encode("utf-8")):
         return {"ok": False, "error": "Фоновый процесс YT Fast не запустился"}
     return {"ok": True}
 
