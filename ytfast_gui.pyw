@@ -826,6 +826,9 @@ class App:
             return
         if self.mode not in ("input", "error"):
             return
+        # до показа: закрываясь, они поднимают главное окно и спрятали бы меню под ним
+        self.close_folders(refocus=False)
+        self.close_history(refocus=False)
         px, T = self.px, self.T
         top = tk.Toplevel(self.root)
         self.menu = ui.Panel(top, T, 8, self.S)
