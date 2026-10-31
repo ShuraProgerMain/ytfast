@@ -30,6 +30,12 @@
   const HANDLE_GRAB = 9; // пикселей вокруг ползунка, где он ещё берётся мышью
   const SEEK_INTERVAL = 150; // как часто плеер показывает кадр при перетаскивании, мс
   const PLAYHEAD_INTERVAL = 250;
+  const THUMB_CONTENT = "img, yt-thumbnail-view-model, yt-image"; // иначе это ссылка-заголовок
+  const PAGE_CHROME = "#masthead-container, ytd-popup-container, tp-yt-app-drawer, tp-yt-iron-dropdown"; // поверх миниатюр
+  const POINTER_INTERVAL = 30; // как часто смотреть, что под курсором, мс
+  const SCROLL_SETTLE = 120; // после прокрутки курсор стоит, а под ним уже другая миниатюра, мс
+  const REPLY_TIMEOUT = 15000; // фоновый процесс может запускаться до 10 с
+  const RELOAD_HINT = "Расширение обновилось: перезагрузите страницу";
   const HINT = "Скачать через YT Fast";
 
   function symbol(name) {
@@ -50,6 +56,16 @@
     src: url("${chrome.runtime.getURL("Inter.ttf")}") format("truetype"); }`;
   document.head.append(font);
 
+  // Запрос к фоновому скрипту. После обновления расширения старая вкладка теряет связь с ним:
+  // вызов бросает исключение, и без этой обёртки кнопка молча заблокировалась бы навсегда.
+  function ask(message, reply) {
+    try {
+      chrome.runtime.sendMessage(message, (res) => reply(chrome.runtime.lastError ? null : res));
+    } catch {
+      reply(null);
+    }
+  }
+
   function linkFor(href) {
     const u = new URL(href, location.href);
     const id = u.searchParams.get("v");
@@ -66,6 +82,7 @@
     btn.append(svg);
     const text = label ? btn.appendChild(document.createElement("span")) : null;
     let timer;
+    let job = 0; // ответ старой загрузки не должен менять кнопку, уже показанную на другом ролике
     const show = (state, caption, title) => {
       svg.replaceChildren(...ICONS[state].map((d) => {
         const p = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -77,6 +94,7 @@
       btn.dataset.state = state;
     };
     const reset = () => {
+      job += 1;
       clearTimeout(timer);
       btn.disabled = false;
       show("idle", label, HINT);
@@ -85,12 +103,17 @@
       const url = getLink();
       if (!url || btn.disabled) return;
       btn.disabled = true; // двойной клик не должен запускать две загрузки
-      chrome.runtime.sendMessage({ type: "download", url, folder, ...section }, (res) => {
-        const ok = !chrome.runtime.lastError && res && res.ok;
-        const error = (res && res.error) || "Расширение обновилось: перезагрузите страницу";
-        show(ok ? "ok" : "err", ok ? "Качается" : "Ошибка", ok ? "Загрузка идёт в YT Fast" : error);
+      const mine = ++job;
+      const finish = (res) => {
+        if (mine !== job) return;
+        job += 1;
+        clearTimeout(timer);
+        const ok = !!(res && res.ok);
+        show(ok ? "ok" : "err", ok ? "Качается" : "Ошибка", ok ? "Загрузка идёт в YT Fast" : (res && res.error) || RELOAD_HINT);
         timer = setTimeout(reset, ok ? 2500 : 5000);
-      });
+      };
+      timer = setTimeout(() => finish(null), REPLY_TIMEOUT);
+      ask({ type: "download", url, folder, ...section }, finish);
     };
     btn.addEventListener("click", (e) => {
       e.preventDefault();
@@ -139,8 +162,8 @@
     closeMenu();
     menuOwner = owner;
     menuTimer = setTimeout(() => {
-      chrome.runtime.sendMessage({ type: "folders" }, (res) => {
-        if (chrome.runtime.lastError || !res || !res.ok || menuOwner !== owner) return;
+      ask({ type: "folders" }, (res) => {
+        if (!res || !res.ok || menuOwner !== owner) return;
         if (res.folders.length > 1 || owner !== thumb) showMenu(owner, res.folders, res.current);
       });
     }, MENU_OPEN_DELAY);
@@ -481,9 +504,12 @@
   placeShorts();
 
   // ---------- миниатюры ----------
-  // Предпросмотр YouTube ложится поверх миниатюры, забирает события мыши, а сам элемент может заменить
-  // или очистить. Поэтому при наведении запоминаем ссылку и прямоугольник и дальше живём только по ним.
-  let hovered = null; // { el, link, rect, scrollY } — миниатюра под курсором
+  // Что под курсором, определяем по точке, а не по mouseover: тот срабатывает только при переходе
+  // на другой элемент, и после прокрутки кнопка не появилась бы, пока курсор стоит на той же картинке.
+  // Точка видит и миниатюру под предпросмотром YouTube, который перекрывает её и забирает события.
+  let hovered = null; // { el, link, scrollY } — миниатюра под курсором; ссылка запомнена: YouTube её очищает
+  let pointer = null;
+  let pointerTimer = null;
   const thumb = makeButton("ytfast-btn ytfast-thumb", "", () => hovered && hovered.link);
   document.body.append(thumb.el, menu);
 
@@ -493,46 +519,72 @@
     if (menuOwner === thumb) closeMenu();
   }
 
-  function showThumb(el, link, rect) {
-    if (menuOwner === thumb) closeMenu();
-    hovered = { el, link, rect, scrollY: window.scrollY };
-    thumb.reset();
+  function placeThumb(rect) {
     thumb.el.style.top = `${rect.top + 8}px`;
     thumb.el.style.left = `${rect.left + 8}px`; // в правом углу YouTube показывает свои кнопки
+  }
+
+  function showThumb(el, link, rect) {
+    if (menuOwner === thumb) closeMenu();
+    hovered = { el, link, scrollY: window.scrollY };
+    thumb.reset();
+    placeThumb(rect);
     thumb.el.classList.add("ytfast-visible");
   }
 
-  document.addEventListener("mouseover", (e) => {
-    if (!(e.target instanceof Element) || thumb.el.contains(e.target) || menu.contains(e.target)) return;
-    const el = e.target.closest(THUMB_LINK);
-    if (!el || !el.querySelector("img")) return;
+  function thumbnailAt(stack) {
+    for (const el of stack) {
+      if (el.closest(PAGE_CHROME)) return null;
+      const link = el.closest(THUMB_LINK);
+      if (link && link.querySelector(THUMB_CONTENT) && linkFor(link.href)) return link;
+    }
+    return null;
+  }
+
+  function updateThumb() {
+    pointerTimer = null;
+    if (!pointer || document.fullscreenElement) return;
+    const stack = document.elementsFromPoint(pointer.x, pointer.y);
+    if (stack.includes(thumb.el) || stack.includes(menu)) return;
+    const el = thumbnailAt(stack);
+    const rect = el && el.getBoundingClientRect();
+    if (!el || rect.width < THUMB_MIN_WIDTH) {
+      // список может выходить за миниатюру: пока он открыт, курсору дают до него дойти
+      if (hovered && !(menuOwner === thumb && menu.classList.contains("ytfast-visible"))) hideThumb();
+      return;
+    }
     const link = linkFor(el.href);
-    if (!link || (hovered && hovered.link === link)) return; // предпросмотр того же ролика — кнопка остаётся
-    const rect = el.getBoundingClientRect();
-    if (rect.width >= THUMB_MIN_WIDTH) showThumb(el, link, rect);
-  }, true);
+    if (hovered && hovered.link === link) {
+      if (hovered.el === el) placeThumb(rect); // предпросмотр того же ролика — кнопка остаётся на месте
+      return;
+    }
+    showThumb(el, link, rect);
+  }
 
   document.addEventListener("mousemove", (e) => {
-    if (!hovered || thumb.el.contains(e.target) || menu.contains(e.target)) return;
-    const r = hovered.rect;
-    if (e.clientX >= r.left && e.clientX < r.right && e.clientY >= r.top && e.clientY < r.bottom) return;
-    // список может выходить за миниатюру: пока он открыт, курсору дают до него дойти
-    if (menuOwner === thumb && menu.classList.contains("ytfast-visible")) return;
-    hideThumb();
-  }, true);
+    pointer = { x: e.clientX, y: e.clientY };
+    if (!pointerTimer) pointerTimer = setTimeout(updateThumb, POINTER_INTERVAL);
+  }, { capture: true, passive: true });
 
   // Внутри предпросмотра своя прокрутка: прячемся, только когда сдвинулась сама миниатюра
+  let settleTimer;
   document.addEventListener("scroll", (e) => {
     if (menu.contains(e.target)) return;
     if (e.target === document && !formOpen) closeMenu();
+    clearTimeout(settleTimer);
+    settleTimer = setTimeout(updateThumb, SCROLL_SETTLE);
     if (!hovered) return;
     const moved = e.target === document ? window.scrollY !== hovered.scrollY : e.target.contains(hovered.el);
     if (moved) hideThumb();
   }, { capture: true, passive: true });
 
   document.documentElement.addEventListener("mouseleave", () => {
+    pointer = null;
     hideThumb();
     if (!formOpen) closeMenu();
   });
-  document.addEventListener("yt-navigate-start", () => { hideThumb(); closeMenu(); });
+  document.addEventListener("yt-navigate-start", () => {
+    hideThumb();
+    closeMenu();
+  });
 })();
