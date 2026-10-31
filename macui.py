@@ -536,6 +536,26 @@ def sym_dots(color, S, size=16):
     return raster(size, size, [(union(*(circle(x * k, 8 * k, 1.6 * k) for x in (3.5, 8, 12.5))), color)], S)
 
 
+def sym_clock(color, S, size=16):
+    k = size / 16
+    return raster(size, size, [(union(stroke(circle(8 * k, 8 * k, 6 * k), 1.4 * k),
+                                      line([(8 * k, 4.6 * k), (8 * k, 8 * k), (10.4 * k, 9.5 * k)], 1.4 * k)), color)], S)
+
+
+def sym_download(color, S, size=16):
+    k = size / 16
+    return raster(size, size, [(union(line([(8 * k, 2.5 * k), (8 * k, 10 * k)], 1.5 * k),
+                                      line([(4.6 * k, 7 * k), (8 * k, 10.4 * k), (11.4 * k, 7 * k)], 1.5 * k),
+                                      line([(3.5 * k, 13.5 * k), (12.5 * k, 13.5 * k)], 1.5 * k)), color)], S)
+
+
+def sym_copy(color, S, size=16):
+    k = size / 16
+    return raster(size, size, [(union(stroke(rrect(5.5 * k, 5.5 * k, 13.5 * k, 13.5 * k, 1.8 * k), 1.3 * k),
+                                      cut(stroke(rrect(2.5 * k, 2.5 * k, 10.5 * k, 10.5 * k, 1.8 * k), 1.3 * k),
+                                          rrect(4.5 * k, 4.5 * k, 15 * k, 15 * k, 2 * k))), color)], S)
+
+
 def sym_scissors(color, S, size=16):
     k = size / 16
     return raster(size, size, [(union(stroke(circle(4.2 * k, 12 * k, 2.2 * k), 1.4 * k),

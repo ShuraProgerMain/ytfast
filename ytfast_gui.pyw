@@ -52,6 +52,9 @@ import ytfast  # noqa: E402
 QUALITIES = [("Лучшее", None), ("2160p", 2160), ("1440p", 1440), ("1080p", 1080),
              ("720p", 720), ("480p", 480), ("Только звук", "audio")]
 SETTINGS = os.path.join(os.environ.get("APPDATA", os.path.expanduser("~")), "ytfast", "settings.json")
+HISTORY = os.path.join(os.path.dirname(SETTINGS), "history.json")
+HISTORY_MAX = 100
+MONTHS = ("янв", "фев", "мар", "апр", "мая", "июн", "июл", "авг", "сен", "окт", "ноя", "дек")
 LOG = os.path.join(os.path.dirname(SETTINGS), "gui.log")
 
 # размеры в дизайн-пикселях (аналог pt в macOS)
@@ -60,6 +63,7 @@ STRIP_W, STRIP_H = 330, 60  # полоска загрузки
 MENU_ITEM, MENU_PAD = 22, 5
 FOLDER_ROW, FOLDERS_W = 26, 340  # список папок
 DLG_W, DLG_H = 440, 190  # окно «добавить папку»
+HIST_W, HIST_ROWS = 480, 10  # список истории: ширина и сколько строк видно сразу
 SECT_H, TIME_W = 88, 84  # блок «от — до» и его поля
 LINE_X, LINE_Y, KNOB = 27, 24, 16  # таймлайн: отступ слева, высота от начала блока, диаметр ползунка
 TAG_COLORS = [None, "red", "orange", "yellow", "green", "blue", "purple", "gray"]  # как метки в Finder
@@ -87,6 +91,36 @@ def save_settings(**changes):
             json.dump(s, f, ensure_ascii=False, indent=1)
     except OSError:
         pass
+
+
+def load_history():
+    """Сначала новые: [{url, title, path, folder, section, q, time}]."""
+    try:
+        with open(HISTORY, encoding="utf-8") as f:
+            items = json.load(f)
+        return items if isinstance(items, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_history(items):
+    try:
+        os.makedirs(os.path.dirname(HISTORY), exist_ok=True)
+        tmp = HISTORY + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(items[:HISTORY_MAX], f, ensure_ascii=False, indent=1)
+        os.replace(tmp, HISTORY)
+    except OSError:
+        pass
+
+
+def format_when(stamp):
+    t, now = time.localtime(stamp), time.localtime()
+    if t[:3] == now[:3]:
+        return time.strftime("%H:%M", t)
+    if t[:3] == time.localtime(time.time() - 86400)[:3]:
+        return "вчера"
+    return f"{t.tm_mday} {MONTHS[t.tm_mon - 1]}" + ("" if t.tm_year == now.tm_year else f" {t.tm_year}")
 
 
 def same_path(a, b):
@@ -161,6 +195,13 @@ class Resources:
             "track": ui.plate(W - 36, 6, 3, T.track, S),
             "seg": ui.plate(120, 6, 3, acc, S),
             "dots": ui.sym_dots(sec, S),
+            "clock": ui.sym_clock(sec, S),
+            "clock_on": ui.sym_clock(acc, S),
+            "hist_open": ui.sym_folder(sec, S),
+            "hist_open_on": ui.sym_folder((255, 255, 255, 1), S),
+            "hist_down": ui.sym_download(sec, S),
+            "hist_down_on": ui.sym_download((255, 255, 255, 1), S),
+            "hist_copy_on": ui.sym_copy((255, 255, 255, 1), S),
             "cut": ui.sym_scissors(sec, S),
             "cut_on": ui.sym_scissors(acc, S),
             "hover18": ui.plate(18, 30, 6, T.hover, S),
@@ -232,7 +273,7 @@ class Resources:
 class App:
     """Одно окно: строка Spotlight, которая при загрузке сворачивается в полоску."""
 
-    def __init__(self, daemon, res, monitor, url=None, folder=None, section=None):
+    def __init__(self, daemon, res, monitor, url=None, folder=None, section=None, quality=None):
         self.daemon, self.res = daemon, res
         self.screen, self.work_area = monitor  # монитор, где нажали Ctrl+Alt+Y: окно и полоска живут на нём
         self.root = tk.Toplevel(daemon.root)
@@ -255,7 +296,9 @@ class App:
         self.closed = False
         self.spin = 0
         settings = load_settings()
-        self.q = min(max(settings["quality"], 0), len(QUALITIES) - 1)
+        self.q = min(max(settings["quality"] if quality is None else quality, 0), len(QUALITIES) - 1)
+        self.history_pop = None  # выпадающий список истории
+        self.job_info = None  # что качается сейчас: для записи в историю
         self.folder = folder or settings["folder"]  # куда сохранять: по умолчанию — последняя папка сохранения
         self.folders_pop = None  # выпадающий список папок
         self.dialog = None  # окно «добавить папку»
@@ -289,6 +332,7 @@ class App:
         root.bind("<Down>", lambda e: self.menu_move(1))
         root.bind("<Up>", lambda e: self.menu_move(-1))
         self.c.bind("<Button-1>", self.click_canvas, add="+")
+        root.bind("<MouseWheel>", self.history_wheel)  # фокус остаётся в строке, колесо приходит ей
 
         if url:  # кнопка в браузере: сразу качаем в полоске, фокус остаётся в браузере
             self.view = "strip"
@@ -312,6 +356,7 @@ class App:
             self.line_cancel.set()
         self.close_menu(refocus=False)
         self.close_folders(refocus=False)
+        self.close_history(refocus=False)
         self.close_dialog(refocus=False)
         self.panel.destroy()
         self.daemon.window_closed(self)
@@ -343,8 +388,17 @@ class App:
         c.tag_bind("cut", "<Leave>", lambda e: c.itemconfigure(self.cut_bg, image=self.img["clear30"]))
         c.tag_bind("cut", "<ButtonRelease-1>", lambda e: self.toggle_section())
 
+        # часы: история загрузок
+        hist_x = cut_x - px(2 + 30)
+        self.hist_bg = c.create_image(hist_x, cy - px(15), anchor="nw", image=self.img["clear30"], tags=("full", "hist"))
+        self.hist_icon = c.create_image(hist_x + px(15), cy, image=self.img["clock"], tags=("full", "hist"))
+        self.hist_x = hist_x
+        c.tag_bind("hist", "<Enter>", lambda e: c.itemconfigure(self.hist_bg, image=self.img["hover30"]))
+        c.tag_bind("hist", "<Leave>", lambda e: c.itemconfigure(self.hist_bg, image=self.img["clear30"]))
+        c.tag_bind("hist", "<ButtonRelease-1>", lambda e: self.toggle_history())
+
         # селектор качества: просто текст и неяркая стрелка, подложка — только при наведении
-        self.sel_r = cut_x - px(4)
+        self.sel_r = hist_x - px(4)
         self.sel_hover = False
         self.pop = c.create_image(0, cy - px(14), anchor="nw", tags=("full", "pop"))
         self.pop_text = c.create_text(self.sel_r - px(22), cy, anchor="e", text=QUALITIES[self.q][0],
@@ -621,6 +675,7 @@ class App:
         self.field.set_readonly(not editable)
         c.itemconfigure("pop", state="normal" if editable else "hidden")
         c.itemconfigure("cut", state="normal" if editable else "hidden")
+        c.itemconfigure("hist", state="normal" if editable else "hidden")
         show_section = self.sect_open and editable
         self.place_section(show_section)
         c.itemconfigure(self.btn_icon, image=self.img["stop"] if self.mode == "busy" else self.folder_img())
@@ -720,6 +775,7 @@ class App:
     def dismiss(self):
         self.close_menu(refocus=False)
         self.close_folders(refocus=False)
+        self.close_history(refocus=False)
         self.close_dialog(refocus=False)
         if self.mode == "busy":
             self.to_strip()
@@ -731,6 +787,8 @@ class App:
             self.close_menu()
         elif self.folders_pop:
             self.close_folders()
+        elif self.history_pop:
+            self.close_history()
         elif self.view == "full":
             self.dismiss()
 
@@ -752,6 +810,8 @@ class App:
                 self.close_menu()
         if self.folders_pop and not (self.dots_x - self.px(2) <= e.x < self.dots_x + self.px(18)):
             self.close_folders()
+        if self.history_pop and not (self.hist_x <= e.x < self.hist_x + self.px(30)):
+            self.close_history()
 
     def on_button(self):
         if self.mode == "busy":
@@ -1000,6 +1060,184 @@ class App:
         self.folders_pop = None
         self.leave_since = None
 
+    # ---------- история ----------
+    def toggle_history(self):
+        if self.history_pop:
+            self.close_history()
+        else:
+            self.open_history()
+
+    def open_history(self, offset=0):
+        if self.history_pop or self.mode not in ("input", "error") or self.view != "full":
+            return
+        self.close_menu()
+        self.close_folders(refocus=False)
+        px, c, T = self.px, self.c, self.T
+        self.hist_items = load_history()
+        for item in self.hist_items:
+            item["exists"] = bool(item.get("path")) and os.path.isfile(item["path"])
+        colors = {os.path.normcase(os.path.normpath(f["path"])): f.get("color") for f in load_settings()["folders"]}
+        self.hist_colors = lambda folder: colors.get(os.path.normcase(os.path.normpath(folder)))
+        n = min(len(self.hist_items), HIST_ROWS)
+        self.hist_offset = max(0, min(offset, len(self.hist_items) - HIST_ROWS))
+        self.hist_n = n
+        self.hist_hl = None
+        self.hist_copied = None
+        ph = MENU_PAD * 2 + (FOLDER_ROW * n + 9 + FOLDER_ROW if n else FOLDER_ROW)
+        self.history_pop = pop = ui.Panel(tk.Toplevel(self.root), T, 8, self.S)
+        pc = pop.canvas
+        self.img["hist_hl"] = ui.plate(HIST_W - 2 * MENU_PAD, FOLDER_ROW, 5, ui.rgba(T.accent), self.S)
+        self.hist_hl_item = pc.create_image(px(MENU_PAD), 0, anchor="nw", image=self.img["hist_hl"], state="hidden")
+        self.hist_slots = []
+        for j in range(n):
+            yc = px(MENU_PAD + FOLDER_ROW * j + FOLDER_ROW / 2)
+            self.hist_slots.append({
+                "dot": pc.create_image(px(17), yc),
+                "name": pc.create_text(px(29), yc, anchor="w", font=self.f_text, fill=T.label),
+                "when": pc.create_text(px(HIST_W - 38), yc, anchor="e", font=self.f_small, fill=T.secondary),
+                "act": pc.create_image(px(HIST_W - 20), yc),
+                "copy": pc.create_image(px(HIST_W - 46), yc, image=self.img["hist_copy_on"], state="hidden"),
+                "del": pc.create_image(px(HIST_W - 70), yc, image=self.img["xmark_on"], state="hidden"),
+            })
+        if n:
+            self.img["hist_sep"] = ui.solid(px(HIST_W - 2 * MENU_PAD - 16), max(1, px(1)), T.separator)
+            pc.create_image(px(MENU_PAD + 8), px(MENU_PAD + FOLDER_ROW * n + 4), anchor="nw", image=self.img["hist_sep"])
+            ya = px(MENU_PAD + FOLDER_ROW * n + 9 + FOLDER_ROW / 2)
+            self.hist_clear = pc.create_text(px(17), ya, anchor="w", text="Очистить историю", font=self.f_text, fill=T.label)
+            if len(self.hist_items) > n:
+                self.hist_bar = pc.create_rectangle(0, 0, 0, 0, fill=T.secondary, outline="")
+        else:
+            pc.create_text(px(HIST_W / 2), px(MENU_PAD + FOLDER_ROW / 2), text="Скачанных роликов пока нет",
+                           font=self.f_text, fill=T.secondary)
+        pc.bind("<ButtonRelease-1>", self.history_click)
+        self.history_paint()
+        x = self.root.winfo_rootx() + px(W) - px(HIST_W)
+        y = self.root.winfo_rooty() + self.panel.geom[3] + px(4)
+        pop.place(x, y, px(HIST_W), px(ph))
+        c.itemconfigure(self.hist_icon, image=self.img["clock_on"])
+        ui.to_foreground(self.root)  # клавиатура остаётся в строке…
+        pop.raise_()  # …а список — поверх неё
+
+    def history_row(self, y):
+        """Номер видимой строки под мышью; "clear" — «Очистить историю»; None — мимо."""
+        y = y / self.S - MENU_PAD
+        if 0 <= y < FOLDER_ROW * self.hist_n:
+            return int(y // FOLDER_ROW)
+        if self.hist_n and FOLDER_ROW * self.hist_n + 9 <= y < FOLDER_ROW * self.hist_n + 9 + FOLDER_ROW:
+            return "clear"
+        return None
+
+    def history_paint(self):
+        """Строки — окно поверх списка: при прокрутке меняется только их содержимое."""
+        pc, T, px = self.history_pop.canvas, self.T, self.px
+        for j, slot in enumerate(self.hist_slots):
+            k = self.hist_offset + j
+            item = self.hist_items[k]
+            on = j == self.hist_hl
+            exists = item["exists"]
+            section = item.get("section")
+            text = item.get("title") or os.path.basename(item.get("path") or "") or item.get("url", "")
+            if section:
+                end = ytfast.format_time(section[1]) if section[1] else "конец"
+                text += f"  {ytfast.format_time(section[0])}–{end}"
+            right = HIST_W - (84 if on else 90)
+            pc.itemconfigure(slot["name"], text=elide(text, self.f_text, px(right - 29)),
+                             fill="white" if on else T.label if exists else T.placeholder)
+            pc.itemconfigure(slot["dot"], image=self.res.tag_dot(self.hist_colors(item.get("folder") or "")))
+            pc.itemconfigure(slot["when"], text=format_when(item.get("time", 0)), state="hidden" if on else "normal")
+            name = ("hist_open" if exists else "hist_down") + ("_on" if on else "")
+            pc.itemconfigure(slot["act"], image=self.img[name])
+            copied = self.hist_copied == k
+            pc.itemconfigure(slot["copy"], state="normal" if on else "hidden",
+                             image=self.img["check_on" if copied else "hist_copy_on"])
+            pc.itemconfigure(slot["del"], state="normal" if on else "hidden")
+        if self.hist_n:
+            hl = self.hist_hl
+            pc.itemconfigure(self.hist_clear, fill="white" if hl == "clear" else T.label)
+            if hl is None:
+                pc.itemconfigure(self.hist_hl_item, state="hidden")
+            else:
+                top = MENU_PAD + (FOLDER_ROW * self.hist_n + 9 if hl == "clear" else FOLDER_ROW * hl)
+                pc.coords(self.hist_hl_item, px(MENU_PAD), px(top))
+                pc.itemconfigure(self.hist_hl_item, state="normal")
+            total = len(self.hist_items)
+            if total > self.hist_n:
+                h = FOLDER_ROW * self.hist_n
+                y0 = MENU_PAD + h * self.hist_offset / total
+                pc.coords(self.hist_bar, px(HIST_W - 4), px(y0), px(HIST_W - 2), px(y0 + h * self.hist_n / total))
+
+    def update_history_hover(self):
+        """Подсветка строки по реальному положению мыши — не зависит от событий движения."""
+        x, y = self.root.winfo_pointerxy()
+        gx, gy, gw, gh = self.history_pop.geom
+        self.history_highlight(self.history_row(y - gy) if gx <= x < gx + gw and gy <= y < gy + gh else None)
+
+    def history_highlight(self, row):
+        if self.history_pop and row != self.hist_hl:
+            self.hist_hl = row
+            self.history_paint()
+
+    def history_wheel(self, e):
+        if not self.history_pop:
+            return
+        limit = max(0, len(self.hist_items) - HIST_ROWS)
+        offset = max(0, min(self.hist_offset + (-1 if e.delta > 0 else 1), limit))
+        if offset != self.hist_offset:
+            self.hist_offset = offset
+            self.hist_copied = None
+            self.history_paint()
+
+    def history_click(self, e):
+        row = self.history_row(e.y)
+        if row is None:
+            return
+        if row == "clear":
+            save_history([])
+            self.close_history(refocus=False)
+            self.open_history()
+            return
+        k = self.hist_offset + row
+        item = self.hist_items[k]
+        x = e.x / self.S
+        if HIST_W - 58 <= x < HIST_W - 34:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(item.get("url", ""))
+            self.hist_copied = k
+            self.history_paint()
+        elif HIST_W - 82 <= x < HIST_W - 58:
+            del self.hist_items[k]
+            save_history([{a: b for a, b in i.items() if a != "exists"} for i in self.hist_items])
+            offset = self.hist_offset
+            self.close_history(refocus=False)
+            self.open_history(offset)
+        else:
+            self.history_action(item)
+
+    def history_action(self, item):
+        """Файл на месте — показать его; удалён или перемещён — скачать заново с теми же настройками."""
+        self.close_history(refocus=False)
+        if item["exists"]:
+            open_folder(item["path"], item.get("folder") or self.folder)
+            return
+        self.daemon.open_window(item["url"], item.get("folder") or self.folder, item.get("section"), item.get("q"))
+        self.quit()
+
+    def close_history(self, refocus=True):
+        if not self.history_pop:
+            return
+        self.history_pop.destroy()
+        self.history_pop = None
+        self.c.itemconfigure(self.hist_icon, image=self.img["clock"])
+        if refocus and not self.closed:
+            ui.to_foreground(self.root)
+            self.field.focus()
+
+    def remember_download(self, out):
+        info = self.job_info
+        if info:
+            save_history([{"title": self.title or os.path.basename(out), "path": out, "time": time.time(), **info}]
+                         + load_history())
+
     def open_add_dialog(self):
         """Окно-лист под строкой: путь (с кнопкой «Обзор…») и цвет метки."""
         self.close_folders(refocus=False)
@@ -1149,7 +1387,9 @@ class App:
                 return
         self.close_menu()
         self.close_folders()
+        self.close_history(refocus=False)
         self.set_dots(False)
+        self.job_info = {"url": url, "folder": self.folder, "section": section, "q": self.q}
         save_settings(folder=self.folder)  # «последняя папка сохранения» — для следующих окон
         self.job += 1
         self.cancel = threading.Event()
@@ -1200,6 +1440,8 @@ class App:
             return
         if self.view == "full":
             self.update_folder_hover()
+            if self.history_pop:
+                self.update_history_hover()
         if self.mode == "busy" and self.progress is None:
             self.spin = (self.spin + 1) % 12
             self.draw_progress()
@@ -1229,6 +1471,7 @@ class App:
 
     def on_done(self, out):
         self.mode, self.result, self.progress = "done", out, 1.0
+        self.remember_download(out)
         self.c.itemconfigure(self.d_title, text=elide(self.title or os.path.basename(out), self.f_semi, self.px(W - 36)))
         where = elide_path(os.path.dirname(out), self.f_small, self.px(W - 36 - 200))
         self.status = f"Сохранено в {where}  ·  Enter — новая ссылка"
@@ -1362,11 +1605,11 @@ class Daemon:
         while not self.links.empty():
             self.open_window(*self.links.get())
 
-    def open_window(self, url=None, folder=None, section=None):
+    def open_window(self, url=None, folder=None, section=None, quality=None):
         dark = ui.dark_mode()
         if dark != self.res.T.dark and not self.windows:  # тему Windows переключили
             self.res = Resources(self.root, dark)
-        self.windows.append(App(self, self.res, ui.active_monitor(), url, folder, section))
+        self.windows.append(App(self, self.res, ui.active_monitor(), url, folder, section, quality))
 
     def window_closed(self, w):
         if w in self.windows:
