@@ -34,6 +34,11 @@ APPDATA_BIN = os.path.join(os.environ.get("APPDATA", ""), "media-downloader", "b
 NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # без мигающей консоли из GUI
 
 
+X_HOST = re.compile(r"^https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/", re.I)
+X_VIDEO = re.compile(r"^https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/\w+/status/\d+/video/\d+/?(?:[?#].*)?$", re.I)
+X_TITLE_MAX = 80
+
+
 class Error(Exception):
     pass
 
@@ -63,6 +68,26 @@ def format_selector(quality=None, audio=False, h264=False):
     # звук — AAC (m4a): Opus, который YouTube отдаёт «лучшим», не понимают DaVinci Resolve,
     # Premiere и часть плееров — видео открывается без звука
     return f"bv*{h}+ba[ext=m4a]/bv*{h}+ba/b{h}"
+
+
+def selector_for(url, quality=None, audio=False, h264=False):
+    """С X берём только прямую ссылку на ролик и обычный mp4: у него уже есть звук, а его
+    HLS-варианты, которые yt-dlp считает лучшими, этот загрузчик не умеет."""
+    if not X_HOST.match(url):
+        return format_selector(quality, audio, h264)
+    if not X_VIDEO.match(url):
+        raise Error("С X качаются только ролики. Откройте ролик и скопируйте его ссылку: "
+                    "она заканчивается на /video/1")
+    if audio:
+        raise Error("С X качается только видео: выберите другое качество")
+    h = f"[height<={quality}]" if quality else ""
+    return f"b[protocol^=http]{h}/b[protocol^=http]"
+
+
+def x_title(title):
+    """Заголовок ролика на X — это текст поста: для имени файла хватит начала первой строки."""
+    first = re.sub(r"https?://\S+", "", (title or "").split("\n")[0]).strip()
+    return first[:X_TITLE_MAX].strip()
 
 
 @functools.lru_cache(maxsize=1)
@@ -308,7 +333,9 @@ def download(url, output=DEFAULT_OUT, quality=None, audio=False, h264=False, con
     """Скачивает один ролик или его часть (section — секунды от и до), возвращает путь к готовому файлу."""
     ytdlp, ffmpeg = find_tool("yt-dlp", "YTDLP"), find_tool("ffmpeg", "FFMPEG")
     log(f"> {url}\n  получаю ссылки...")
-    info, fmts = extract(ytdlp, url, format_selector(quality, audio, h264), cancel)
+    info, fmts = extract(ytdlp, url, selector_for(url, quality, audio, h264), cancel)
+    if X_HOST.match(url):
+        info["title"] = x_title(info.get("title")) or info.get("id")
     if on_title:
         on_title(info.get("title") or info["id"])
     if section:
@@ -366,7 +393,7 @@ def download(url, output=DEFAULT_OUT, quality=None, audio=False, h264=False, con
 
 def video_duration(url, cancel=None):
     """Длительность ролика в секундах — для таймлайна."""
-    info, _ = extract(find_tool("yt-dlp", "YTDLP"), url, format_selector(), cancel)
+    info, _ = extract(find_tool("yt-dlp", "YTDLP"), url, selector_for(url), cancel)
     return info.get("duration") or 0
 
 
