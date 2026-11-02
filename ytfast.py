@@ -37,6 +37,21 @@ NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # без мигающе�
 X_HOST = re.compile(r"^https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/", re.I)
 X_VIDEO = re.compile(r"^https?://(?:(?:www|mobile)\.)?(?:x|twitter)\.com/\w+/status/\d+/video/\d+/?(?:[?#].*)?$", re.I)
 X_TITLE_MAX = 80
+YT_LIST = re.compile(r"^https?://(?:www\.|m\.|music\.)?youtube\.com/(?:@|channel/|c/|user/|playlist\b|feed/)", re.I)
+NOT_A_VIDEO = "Это ссылка на канал или плейлист. Откройте нужный ролик и скопируйте его ссылку"
+# частые отказы yt-dlp → понятный текст; остальные показываются как есть
+YTDLP_ERRORS = [
+    ("Unsupported URL", "По этой ссылке нет видео"),
+    ("Private video", "Ролик приватный: его видит только автор"),
+    ("confirm your age", "Ролик с ограничением по возрасту: без входа в аккаунт YouTube его не отдаёт"),
+    ("not a bot", "YouTube временно принял загрузку за бота. Попробуйте через несколько минут"),
+    ("members-only", "Ролик только для спонсоров канала"),
+    ("Premieres in", "Премьера ещё не началась"),
+    ("live event will begin", "Трансляция ещё не началась"),
+    ("is not a valid URL", "Ссылка с ошибкой"),
+    ("video unavailable", "Ролик недоступен: удалён, скрыт или в ссылке ошибка"),
+    ("video is unavailable", "Ролик недоступен: удалён, скрыт или в ссылке ошибка"),
+]
 
 
 class Error(Exception):
@@ -73,6 +88,8 @@ def format_selector(quality=None, audio=False, h264=False):
 def selector_for(url, quality=None, audio=False, h264=False):
     """С X берём только прямую ссылку на ролик и обычный mp4: у него уже есть звук, а его
     HLS-варианты, которые yt-dlp считает лучшими, этот загрузчик не умеет."""
+    if YT_LIST.match(url):
+        raise Error(NOT_A_VIDEO)
     if not X_HOST.match(url):
         return format_selector(quality, audio, h264)
     if not X_VIDEO.match(url):
@@ -106,7 +123,9 @@ def node_ok():
 
 def extract(ytdlp, url, fmt, cancel=None):
     # skip=hls: манифест HLS не нужен (качаем только DASH по https), а стоит ~1.3 с на каждый ролик
-    cmd = [ytdlp, "-J", "--no-playlist", "--no-warnings", "--extractor-args", "youtube:skip=hls", "-f", fmt, url]
+    # --flat-playlist: на ссылке канала или плейлиста yt-dlp иначе минутами обходит все ролики
+    cmd = [ytdlp, "-J", "--no-playlist", "--flat-playlist", "--no-warnings", "--extractor-args", "youtube:skip=hls",
+           "-f", fmt, url]
     # JS-движок для расшифровки ссылок YouTube: Node, если есть, иначе deno от установщика
     # (deno рядом с yt-dlp или в PATH yt-dlp находит сам)
     deno = os.path.join(TOOLS_DIR, "deno.exe")
@@ -130,8 +149,12 @@ def extract(ytdlp, url, fmt, cancel=None):
                 p.communicate()
                 raise Cancelled("Загрузка отменена")
     if p.returncode != 0:
-        raise Error(f"yt-dlp не смог получить ссылки:\n{err.strip()}")
+        err = err.strip()
+        known = next((text for key, text in YTDLP_ERRORS if key.lower() in err.lower()), None)
+        raise Error(known or f"yt-dlp не смог получить ссылки:\n{err}")
     info = json.loads(out)
+    if info.get("_type") == "playlist" or "entries" in info:
+        raise Error(NOT_A_VIDEO)
     return info, info.get("requested_formats") or [info]
 
 
@@ -266,7 +289,7 @@ class Downloader:
                             return
                         tries += 1
                         if tries > 8:
-                            self.error = f"{s['path']}: {e}"
+                            self.error = str(e) or type(e).__name__
                             return
                         time.sleep(min(2 ** tries, 10) * 0.25)
                 with self.lock:
@@ -298,7 +321,7 @@ class Downloader:
         if self.cancel.is_set():
             raise Cancelled("Загрузка отменена")
         if self.error:
-            raise Error(f"Ошибка загрузки: {self.error}")
+            raise Error(f"Загрузка оборвалась: {self.error}. Попробуйте ещё раз")
         return time.time() - t0
 
     def abort(self):
@@ -362,12 +385,8 @@ def download(url, output=DEFAULT_OUT, quality=None, audio=False, h264=False, con
     total = sum(s["size"] for s in streams)
     try:
         el = Downloader(streams, connections, cancel).run(on_progress)
-    except Cancelled:
-        for s in streams:
-            try:
-                os.remove(s["path"])
-            except OSError:
-                pass
+    except BaseException:  # отмена, обрыв сети, Ctrl+C: куски со случайным суффиксом уже не докачать
+        remove_quietly(*(s["path"] for s in streams))
         raise
     log(f"\r  {total / 2**20:.1f} MiB за {el:.1f} с — в среднем "
         f"{total / 2**20 / el:.2f} MiB/s{' ' * 30}")
@@ -606,6 +625,12 @@ def first_video_time(ffmpeg, path):
     return int(row.split(",")[2]) * int(tb.group(1)) / int(tb.group(2))
 
 
+def section_name(title, start, end):
+    """«Название [1.20-1.45]»: длинное название укорачивается, время в конце остаётся."""
+    suffix = f" [{format_time(start, '.')}-{format_time(end, '.')}]"
+    return safe_name(title)[:150 - len(suffix)].rstrip(" .") + suffix
+
+
 def download_section(info, fmts, ffmpeg, section, output, connections, log, on_progress, cancel):
     """Только часть ролика, без перекодирования. Резать без перекодирования можно лишь по ключевым
     кадрам, поэтому начало может оказаться на пару секунд раньше запрошенного, но не позже."""
@@ -622,7 +647,7 @@ def download_section(info, fmts, ffmpeg, section, output, connections, log, on_p
         streams.append({"url": f["url"], "headers": headers, "ext": f["ext"], "video": f.get("vcodec") != "none",
                         "size": f.get("filesize") or content_length(f["url"], headers)})
     streams.sort(key=lambda s: not s["video"])  # видео первым: по его первому кадру выравниваем звук
-    name = safe_name(f"{info.get('title') or info['id']} [{format_time(start, '.')}-{format_time(end, '.')}]")
+    name = section_name(info.get("title") or info["id"], start, end)
     os.makedirs(output, exist_ok=True)
     uniq = os.urandom(3).hex()
     length = end - start

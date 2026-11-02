@@ -561,6 +561,8 @@ class App:
                 self.fill_width = width
                 self.img["line_fill"] = ui.solid(width, self.px(4), ui.rgba(self.T.accent))
             c.itemconfigure(self.line_fill, image=self.img["line_fill"])
+        else:  # конец не позже начала: прежняя полоса торчала бы за ползунком
+            c.itemconfigure(self.line_fill, state="hidden")
         c.coords(self.line_fill, x0, c.coords(self.line_fill)[1])
 
     def line_time(self, e):
@@ -855,7 +857,7 @@ class App:
         mc.bind("<ButtonRelease-1>", lambda e: self.menu_click(e.y))
         self.menu.place(int(x), y, mw, mh)
         self.menu_highlight(self.q)
-        self.hover_sel(True)
+        self.hover_sel(self.sel_hover)  # подложка горит, пока открыто меню; наведение не трогаем
         ui.to_foreground(self.root)  # фокус клавиатуры остаётся в строке…
         self.menu.raise_()  # …а меню — поверх неё
 
@@ -1492,7 +1494,10 @@ class App:
     def show_error(self, title, msg):
         self.mode = "error"
         self.c.itemconfigure(self.d_title, text=title)
-        self.status = msg.strip()[-400:]
+        msg = msg.strip()
+        if len(msg) > 400:  # хвост ошибки yt-dlp важнее начала; режем по слову
+            msg = "…" + msg[-400:].split(" ", 1)[-1]
+        self.status = msg
         if self.view == "full":
             self.layout()
 
@@ -1546,7 +1551,7 @@ class App:
 
     def refresh_strip(self):
         c = self.c
-        title = self.title or ("Получаю ссылки…" if self.mode == "busy" else "")
+        title = self.title or {"busy": "Получаю ссылки…", "error": "Не получилось скачать"}.get(self.mode, "")
         c.itemconfigure(self.s_title, text=elide(title, self.f_semi, self.px(STRIP_W - 56 - 90)))
         if self.mode == "done":
             c.itemconfigure(self.s_icon, image=self.img["done_big"])
